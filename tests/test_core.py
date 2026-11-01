@@ -155,5 +155,39 @@ class TestHttpFetchedHeaders(unittest.TestCase):
         self.assertEqual(f.get_all("missing-header"), [])
 
 
+class TestScheduler(unittest.TestCase):
+    def test_batch_size_dispatches_in_chunks_and_stops_between_batches(self):
+        import asyncio
+        from config import Config
+        from core.scheduler import Scheduler
+
+        cfg = Config({"scan": {"concurrency_targets": 2, "batch_size": 2}})
+        stop = asyncio.Event()
+        done_urls = []
+        active_peaks = []
+        in_flight = 0
+
+        async def on_done(url, result):
+            done_urls.append(url)
+            if len(done_urls) == 2:
+                stop.set()
+
+        async def worker(url):
+            nonlocal in_flight
+            in_flight += 1
+            active_peaks.append(in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return (url, [], "A", "", 1, True)
+
+        sched = Scheduler(cfg, stop, on_done)
+        asyncio.run(sched.run(["https://a.test/", "https://b.test/", "https://c.test/", "https://d.test/"], worker))
+        self.assertEqual(done_urls, ["https://a.test/", "https://b.test/"])
+        self.assertEqual(sched.state.completed, 2)
+        self.assertEqual(sched.state.skipped, 2)
+        self.assertEqual(sched.state.pending, 0)
+        self.assertLessEqual(max(active_peaks), 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

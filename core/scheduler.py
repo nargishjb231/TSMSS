@@ -40,8 +40,8 @@ class Scheduler:
         self.stop_event = stop_event
         self.on_target_done = on_target_done
         self.on_progress = on_progress
-        self.concurrency = int(config.get("scan.concurrency_targets", 3))
-        self.batch_size = int(config.get("scan.batch_size", 5))
+        self.concurrency = max(1, int(config.get("scan.concurrency_targets", 3)))
+        self.batch_size = max(1, int(config.get("scan.batch_size", 5)))
         self.state = BatchState()
 
     async def run(self, urls: list[str],
@@ -49,9 +49,6 @@ class Scheduler:
         self.state.total = len(urls)
         self.state.pending = len(urls)
         sem = asyncio.Semaphore(self.concurrency)
-        queue: asyncio.Queue[str] = asyncio.Queue()
-        for u in urls:
-            queue.put_nowait(u)
 
         async def runner(url: str) -> None:
             async with sem:
@@ -84,13 +81,20 @@ class Scheduler:
                 await self.on_target_done(url, result)
                 self._report()
 
-        tasks = [asyncio.create_task(runner(u)) for u in urls]
-        try:
-            await asyncio.gather(*tasks)
-        except asyncio.CancelledError:
-            for t in tasks:
-                t.cancel()
-            raise
+        for start in range(0, len(urls), self.batch_size):
+            batch = urls[start : start + self.batch_size]
+            if self.stop_event.is_set():
+                self.state.skipped += len(batch)
+                self.state.pending -= len(batch)
+                self._report()
+                continue
+            tasks = [asyncio.create_task(runner(u)) for u in batch]
+            try:
+                await asyncio.gather(*tasks)
+            except asyncio.CancelledError:
+                for t in tasks:
+                    t.cancel()
+                raise
 
     def _report(self) -> None:
         if self.on_progress:
