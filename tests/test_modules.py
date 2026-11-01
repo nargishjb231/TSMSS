@@ -15,11 +15,11 @@ from config import Config
 from core.context import ScanContext, Target
 from core.rate_limiter import RateLimiter
 from core.scope import ScopeGuard
-from modules import (cookies, cors, headers, http_security, information_disclosure,
-                     vulnerability_indicators)
+from modules import (authentication, cookies, cors, headers, http_security,
+                     information_disclosure, vulnerability_indicators)
 
 PAGE = b"""<html><head><title>fixture</title></head><body>
-<h1>hi</h1><a href="/echo?q=1">x</a>
+<h1>hi</h1><a href="/echo?q=1&amp;amp;display=grid">x</a>
 <form action="/echo" method="get"><input name="q"></form></body></html>"""
 
 
@@ -39,6 +39,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        import html as htmllib
         parsed = urlparse(self.path)
         qs = parse_qs(parsed.query)
         if parsed.path == "/echo":
@@ -46,6 +47,12 @@ class Handler(BaseHTTPRequestHandler):
             if q.endswith("'"):
                 return self._send(500, b"<html>SQL syntax error near '''</html>")
             return self._send(200, f"<html><body>echo: {q}</body></html>".encode())
+        if parsed.path == "/safe-echo":
+            q = htmllib.escape(qs.get("q", [""])[0], quote=True)
+            return self._send(200, f'<html><body><input name="q" value="{q}"></body></html>'.encode())
+        if parsed.path == "/login":
+            # Empty SPA form with unnamed password input
+            return self._send(200, b'<html><body><form><input type="email"><input type="password"></form></body></html>')
         if parsed.path == "/.env":
             return self._send(200, b"APP_KEY=base64:abc\nDB_PASSWORD=secret\n")
         if parsed.path == "/open":
@@ -188,6 +195,31 @@ class TestFixture(unittest.IsolatedAsyncioTestCase):
                              f"unexpected https probe when ssl_tls disabled: {requested_urls}")
             self.assertFalse(any("HTTPS" in f.title for f in out))
             await ctx.http.aclose()
+
+    async def test_false_positive_guards(self):
+        with Fixture() as url:
+            # 1. Encoded XSS reflection is INFO, never HIGH/MEDIUM
+            ctx_xss = make_ctx(url + "safe-echo?q=hello", self.cfg())
+            out_xss = await vulnerability_indicators.VulnerabilityIndicatorModule().run(ctx_xss)
+            xss_findings = [f for f in out_xss if "XSS" in f.title or "reflects" in f.title]
+            self.assertEqual(len(xss_findings), 1, xss_findings)
+            self.assertEqual(xss_findings[0].severity, "INFO")
+            await ctx_xss.http.aclose()
+
+            # 2. Empty SPA login form with unnamed inputs is not flagged as missing CSRF or GET login
+            ctx_auth = make_ctx(url, self.cfg())
+            out_auth = await authentication.AuthenticationModule().run(ctx_auth)
+            self.assertFalse(any("CSRF" in f.title for f in out_auth), out_auth)
+            self.assertFalse(any("uses GET" in f.title for f in out_auth), out_auth)
+            await ctx_auth.http.aclose()
+
+            # 3. amp;display parameter is cleaned to display, never amp;display
+            ctx_home = make_ctx(url, self.cfg())
+            await http_security.HttpSecurityModule({}).run(ctx_home)
+            params = await vulnerability_indicators.VulnerabilityIndicatorModule()._discover_params(ctx_home)
+            self.assertIn("display", params)
+            self.assertNotIn("amp;display", params)
+            await ctx_home.http.aclose()
 
 
 if __name__ == "__main__":

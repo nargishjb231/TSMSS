@@ -65,7 +65,16 @@ class AuthenticationModule(BaseModule):
                 evidence=f"form action={form.get('action')}",
                 detection_method="Form markup inspection", confidence=CONFIRMED,
                 remediation="Post to the https:// origin.", tags=["auth", "transport"]))
-        if form.get("method", "get").lower() == "get":
+        names = {(i.get("name") or "").lower() for i in form.find_all("input")}
+        named_inputs = sorted(n for n in names if n)
+        ctx.login_fields = named_inputs
+        if not named_inputs:
+            # Empty SPA form shell without named inputs (bound via JS, not standard form POST)
+            ctx.csrf_token_present = False
+            return out
+
+        raw_method = form.get("method")
+        if raw_method is not None and raw_method.lower() == "get":
             out.append(self.make(
                 ctx, title="Login form uses GET",
                 severity=LOW, cwe="CWE-598",
@@ -74,8 +83,7 @@ class AuthenticationModule(BaseModule):
                 confidence=CONFIRMED, remediation="Use method=post.",
                 tags=["auth", "transport"]))
 
-        names = {(i.get("name") or "").lower() for i in form.find_all("input")}
-        has_csrf = any(any(h in n for h in CSRF_HINTS) for n in names)
+        has_csrf = any(any(h in n for h in CSRF_HINTS) for n in named_inputs)
         ctx.csrf_token_present = has_csrf
         if not has_csrf:
             out.append(self.make(
@@ -83,7 +91,7 @@ class AuthenticationModule(BaseModule):
                 severity=MEDIUM, cwe="CWE-352",
                 description="No hidden token field was found. Login CSRF lets an attacker log a "
                             "victim into an attacker-controlled account.",
-                evidence=f"Input names: {sorted(n for n in names if n)}",
+                evidence=f"Input names: {named_inputs}",
                 detection_method="Form markup inspection", confidence=HIGH_CONF,
                 remediation="Add a per-session synchroniser token or SameSite=Strict cookies.",
                 tags=["auth", "csrf"]))
@@ -96,7 +104,6 @@ class AuthenticationModule(BaseModule):
                 detection_method="Form markup inspection", confidence=CONFIRMED,
                 remediation="Add autocomplete=current-password and autocomplete=username.",
                 tags=["auth", "usability"]))
-        ctx.login_fields = sorted(n for n in names if n)
         return out
 
     def _jwt_scan(self, ctx):

@@ -15,7 +15,7 @@ PATHS = {
     "/.env.local": ("Dotenv configuration file", HIGH, "CWE-538", r"^[A-Z0-9_]+\s*="),
     "/config.php.bak": ("PHP config backup", HIGH, "CWE-530", r"<\?php|DB_"),
     "/wp-config.php.bak": ("WordPress config backup", CRITICAL, "CWE-530", r"DB_PASSWORD|wp-config"),
-    "/backup.zip": ("Backup archive", HIGH, "CWE-530", r"PK\x03\x04|"),
+    "/backup.zip": ("Backup archive", HIGH, "CWE-530", r"^PK\x03\x04"),
     "/backup.sql": ("Database dump", HIGH, "CWE-530", r"CREATE TABLE|INSERT INTO"),
     "/phpinfo.php": ("phpinfo() output", MEDIUM, "CWE-200", r"PHP Version|phpinfo\(\)"),
     "/server-status": ("Apache server-status", LOW, "CWE-200", r"Apache Server Status|requests currently being processed"),
