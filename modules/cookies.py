@@ -17,7 +17,7 @@ class CookieModule(BaseModule):
         if resp is None:
             resp = await ctx.http.request("GET", ctx.target.url)
         out = []
-        for raw in resp.set_cookies:
+        for raw in resp.get_all("set-cookie"):
             out += self._review(ctx, raw, resp)
         return out
 

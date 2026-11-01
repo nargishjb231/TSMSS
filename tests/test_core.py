@@ -131,5 +131,29 @@ class TestTarget(unittest.TestCase):
         self.assertEqual(Target("http://example.com:80/a").https_url, "https://example.com/a")
 
 
+class TestHttpFetchedHeaders(unittest.TestCase):
+    def test_get_all_returns_multi_value_headers(self):
+        import httpx
+        from core.http_client import Fetched, _extract_multi_headers
+        raw = httpx.Headers([
+            ("Set-Cookie", "a=1; Path=/; Expires=Wed, 21 Oct 2026 07:28:00 GMT"),
+            ("Set-Cookie", "b=2; Path=/; HttpOnly"),
+            ("X-Frame-Options", "SAMEORIGIN"),
+            ("X-Frame-Options", "DENY"),
+        ])
+        f = Fetched(
+            url="https://example.com/",
+            status=200,
+            headers={k.lower(): v for k, v in raw.items()},
+            body="",
+            elapsed_ms=1.0,
+            multi_headers=_extract_multi_headers(raw),
+        )
+        self.assertEqual(len(f.get_all("set-cookie")), 2)
+        self.assertIn("Expires=Wed, 21 Oct 2026 07:28:00 GMT", f.get_all("set-cookie")[0])
+        self.assertEqual(f.get_all("X-Frame-Options"), ["SAMEORIGIN", "DENY"])
+        self.assertEqual(f.get_all("missing-header"), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

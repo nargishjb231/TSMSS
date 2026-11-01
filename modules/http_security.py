@@ -15,11 +15,12 @@ SERVER_HEADERS = ("server", "x-powered-by", "x-aspnet-version", "x-generator",
 
 def _header_tokens(resp, name):
     """Split a possibly repeated header into lowercased, de-duplicated tokens."""
-    out=[]
-    for chunk in resp.headers.get(name.lower(), "").split(","):
-        tok=chunk.strip().lower()
-        if tok and tok not in out:
-            out.append(tok)
+    out = []
+    for raw in resp.get_all(name):
+        for chunk in raw.split(","):
+            tok = chunk.strip().lower()
+            if tok and tok not in out:
+                out.append(tok)
     return out
 
 

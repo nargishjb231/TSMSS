@@ -32,18 +32,56 @@ class Fetched:
     final_url: str = ""
     truncated: bool = False
     set_cookies: list[str] = field(default_factory=list)
+    multi_headers: dict[str, list[str]] = field(default_factory=dict)
     error: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.set_cookies and "set-cookie" not in self.multi_headers:
+            self.multi_headers["set-cookie"] = list(self.set_cookies)
+        elif "set-cookie" in self.multi_headers and not self.set_cookies:
+            self.set_cookies = list(self.multi_headers["set-cookie"])
 
     @property
     def ok(self) -> bool:
         return self.error is None
 
     def header(self, name: str, default: str = "") -> str:
-        return self.headers.get(name.lower(), default)
+        val = self.headers.get(name.lower(), default)
+        if isinstance(val, list):
+            return ", ".join(str(v) for v in val)
+        return val
 
     def get_all(self, name: str) -> list[str]:
-        raw = self.headers.get(name.lower())
-        return [raw] if raw else []
+        key = name.lower()
+        if key in self.multi_headers:
+            vals = self.multi_headers[key]
+            if key == "set-cookie":
+                return list(vals)
+            out: list[str] = []
+            for v in vals:
+                if "," in v:
+                    out.extend(p.strip() for p in v.split(",") if p.strip())
+                elif v:
+                    out.append(v)
+            return out
+        if key == "set-cookie" and self.set_cookies:
+            return list(self.set_cookies)
+        raw = self.headers.get(key)
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return [str(v) for v in raw if v]
+        if key != "set-cookie" and "," in raw:
+            return [p.strip() for p in raw.split(",") if p.strip()]
+        return [raw]
+
+
+def _extract_multi_headers(resp_headers) -> dict[str, list[str]]:
+    multi: dict[str, list[str]] = {}
+    items = resp_headers.multi_items() if hasattr(resp_headers, "multi_items") else resp_headers.items()
+    for k, v in items:
+        multi.setdefault(k.lower(), []).append(v)
+    return multi
 
 
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
@@ -111,9 +149,11 @@ class HttpClient:
                 elapsed = (asyncio.get_event_loop().time() - started) * 1000
                 body = await self._read_body(resp)
                 headers = {k.lower(): v for k, v in resp.headers.items()}
+                multi = _extract_multi_headers(resp.headers)
                 fetched = Fetched(url, resp.status_code, headers, body, elapsed,
                                   final_url=str(resp.url),
-                                  set_cookies=resp.headers.get_list("set-cookie"))
+                                  set_cookies=resp.headers.get_list("set-cookie"),
+                                  multi_headers=multi)
                 if resp.status_code in _TRANSIENT_STATUS and attempt < attempts:
                     await self._honour_retry_after(resp, attempt, host)
                     last = fetched
@@ -183,6 +223,7 @@ class HttpClient:
                 fetched.final_url = str(resp.url)
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 fetched.headers = headers
+                fetched.multi_headers = _extract_multi_headers(resp.headers)
                 fetched.set_cookies = resp.headers.get_list("set-cookie")
                 fetched.body = await self._read_body(resp)
             except (httpx.HTTPError, StopRequested) as exc:

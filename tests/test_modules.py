@@ -77,7 +77,7 @@ def make_ctx(url, config):
             self.scope = scope
 
         async def request(self, method, u, retry=True, allow_redirects=False, **kw):
-            from core.http_client import Fetched, Hop
+            from core.http_client import Fetched, Hop, _extract_multi_headers
             try:
                 r = await self.c.request(method, u, **kw)
             except Exception as exc:
@@ -101,7 +101,8 @@ def make_ctx(url, config):
                     r = rr
             return Fetched(u, r.status_code, {k.lower(): v for k, v in r.headers.items()},
                            r.text, 1.0, hops=hops, final_url=str(r.url),
-                           set_cookies=r.headers.get_list("set-cookie"))
+                           set_cookies=r.headers.get_list("set-cookie"),
+                           multi_headers=_extract_multi_headers(r.headers))
 
         async def aclose(self):
             await self.c.aclose()
