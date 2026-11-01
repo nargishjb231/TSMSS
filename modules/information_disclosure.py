@@ -74,8 +74,10 @@ class InformationDisclosureModule(BaseModule):
 
     async def _debug_params(self, ctx):
         out = []
-        for param, value in (("?debug=1", None), ("?test=1", None), ("?_profiler=1", None)):
-            resp = await ctx.http.request("GET", ctx.target.url + param, retry=False)
+        sep = "&" if "?" in ctx.target.url else "?"
+        for param, value in (("debug=1", None), ("test=1", None), ("_profiler=1", None)):
+            probe = ctx.target.url + sep + param
+            resp = await ctx.http.request("GET", probe, retry=False)
             if not resp.ok:
                 continue
             markers = [m for m in ("Symfony Profiler", "Django", "DEBUG =", "SQL Profiler",
@@ -85,7 +87,7 @@ class InformationDisclosureModule(BaseModule):
                     ctx, title=f"Debug mode reactivated by query parameter {param}",
                     severity=LOW, cwe="CWE-489",
                     description=f"Debug markers appeared: {', '.join(markers)}.",
-                    evidence=f"GET {ctx.target.url + param} -> {resp.status}\n{resp.body[:400]}",
+                    evidence=f"GET {probe} -> {resp.status}\n{resp.body[:400]}",
                     detection_method="Debug parameter probe", confidence=HIGH_CONF,
                     remediation="Pin debug mode off in production configuration.",
                     tags=["disclosure", "debug"]))

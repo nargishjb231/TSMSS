@@ -29,8 +29,13 @@ class Target:
         return self.parts.scheme
 
     @property
-    def root(self):
-        return self.parts._replace(path="/", query="", fragment="")
+    def root(self) -> str:
+        """Origin URL as a string, always ending in a single '/'.
+
+        Callers do str(target.root) and concatenate paths, so this must never
+        return a SplitResult (whose str() is a repr).
+        """
+        return self.parts._replace(path="/", query="", fragment="").geturl()
 
     @property
     def https_url(self) -> str:

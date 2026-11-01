@@ -43,8 +43,8 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         if parsed.path == "/echo":
             q = qs.get("q", [""])[0]
-            if q == "boom'":
-                return self._send(500, b"SQL syntax error near '''")
+            if q.endswith("'"):
+                return self._send(500, b"<html>SQL syntax error near '''</html>")
             return self._send(200, f"<html><body>echo: {q}</body></html>".encode())
         if parsed.path == "/.env":
             return self._send(200, b"APP_KEY=base64:abc\nDB_PASSWORD=secret\n")
@@ -91,7 +91,11 @@ def make_ctx(url, config):
                     nxt = str(r.url.join(loc))
                     hops.append(Hop(cur, status, nxt))
                     cur = nxt
-                    rr = await self.c.request("GET", nxt)
+                    try:
+                        rr = await self.c.request("GET", nxt)
+                    except Exception:
+                        # mirror HttpClient._walk_redirects: keep the hop, stop walking
+                        break
                     status, hdrs = rr.status_code, dict(rr.headers)
                     r = rr
             return Fetched(u, r.status_code, {k.lower(): v for k, v in r.headers.items()},

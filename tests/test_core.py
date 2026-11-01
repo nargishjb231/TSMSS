@@ -7,6 +7,7 @@ from core.validator import normalize, validate, load_targets
 from core.scope import ScopeGuard, is_private_ip
 from core.engine import score
 from core.evidence import EvidenceStore
+from core.context import Target
 
 
 class TestValidator(unittest.TestCase):
@@ -24,9 +25,11 @@ class TestValidator(unittest.TestCase):
         self.assertFalse(validate("http://bad host.com").valid)
 
     def test_dedupe(self):
-        p = Path("/tmp/t.txt")
-        p.write_text("example.com\nhttps://example.com/\n# c\n\nbad host\n")
-        ok, rej = load_targets(p)
+        import tempfile
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            p = Path(d) / "t.txt"
+            p.write_text("example.com\nhttps://example.com/\n# c\n\nbad host\n")
+            ok, rej = load_targets(p)
         self.assertEqual(ok, ["https://example.com/"])
         self.assertTrue(any(r["reason"] == "duplicate" for r in rej))
 
@@ -76,12 +79,33 @@ class TestFindings(unittest.TestCase):
 class TestEvidence(unittest.TestCase):
     def test_truncation_and_dedupe(self):
         import tempfile
-        with tempfile.TemporaryDirectory() as d:
-            es = EvidenceStore(Path(d), max_bytes=20)
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            ev = Path(d) / "evidence"
+            es = EvidenceStore(ev, max_bytes=20)
             a = es.save("lbl", "x" * 100)
             b = es.save("lbl", "x" * 100)
-            self.assertEqual(a, b)
-            self.assertIn("truncated", (Path(d) / "evidence" / Path(a).name).read_text())
+            self.assertEqual(a, b, "repeat save must return the identical path")
+            self.assertTrue(a.startswith("evidence/"), a)
+            files = sorted(ev.glob("*.txt"))
+            self.assertEqual(len(files), 1, f"expected 1 deduped file, got {len(files)}")
+            self.assertIn("truncated", files[0].read_text())
+
+
+
+class TestTarget(unittest.TestCase):
+    def test_root_is_string(self):
+        t = Target("https://example.com/a/b?x=1")
+        self.assertIsInstance(t.root, str)
+        self.assertEqual(t.root, "https://example.com/")
+
+    def test_root_keeps_port(self):
+        self.assertEqual(Target("http://h:8080/a").root, "http://h:8080/")
+
+    def test_https_url_upgrades_scheme(self):
+        self.assertEqual(Target("http://example.com/a").https_url, "https://example.com/a")
+
+    def test_https_url_drops_default_port(self):
+        self.assertEqual(Target("http://example.com:80/a").https_url, "https://example.com/a")
 
 
 if __name__ == "__main__":

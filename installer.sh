@@ -50,7 +50,7 @@ done
 hdr "5. Python packages"
 declare -A IMPORTS=([beautifulsoup4]=bs4 [PyYAML]=yaml [dnspython]=dns [httpx]=httpx [rich]=rich)
 python -m pip install --upgrade pip >/dev/null 2>&1
-while IFS= read -r line; do
+while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$line" ] && continue; case "$line" in \#*) continue ;; esac
   pkgname="${line%%[<>=]*}"
   mod="${IMPORTS[$pkgname]:-${pkgname//-/_}}"
