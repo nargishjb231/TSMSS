@@ -47,6 +47,7 @@ class ToolSpec:
     needs_root: bool = False
     needs_wordlist: bool = False
     needs_dir: bool = False
+    only_query: bool = False
 
     @property
     def conf(self) -> str:
@@ -114,6 +115,8 @@ class ToolRunner:
             if self.allow and spec.id not in self.allow:
                 continue
             if spec.id in self.deny:
+                continue
+            if spec.only_query and "?" not in self.target.url:
                 continue
             ok, reason = usable(spec, self.config)
             if not ok:

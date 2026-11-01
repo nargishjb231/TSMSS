@@ -21,7 +21,7 @@ MODULE_ORDER = [
 ]
 
 
-def build_modules(rules: dict) -> list:
+def build_modules(rules: dict, disabled=None) -> list:
     from modules import (api_security, authentication, authorization, cookies, cors,
                          dependency_audit, dns_security, framework_audit, http_security,
                          external_tools, information_disclosure, infrastructure, ssl_tls,
@@ -42,7 +42,9 @@ def build_modules(rules: dict) -> list:
         "infrastructure": infrastructure.InfrastructureModule,
         "external_tools": external_tools.ExternalToolsModule,
     }
-    return [registry[name]() for name in MODULE_ORDER if name in registry]
+    skip_modules = set(disabled or [])
+    return [registry[name]() for name in MODULE_ORDER
+            if name in registry and name not in skip_modules]
 
 
 def score(findings: list[Finding]) -> tuple[int, str]:
@@ -57,7 +59,8 @@ class TargetEngine:
         self.scope = scope
         self.make_http = make_http
         self.evidence = evidence
-        self.modules = build_modules(rules)
+        self.disabled_modules = list(config.get("modules.disabled", []) or [])
+        self.modules = build_modules(rules, self.disabled_modules)
 
     async def scan(self, url: str, stop_event: asyncio.Event) -> tuple[list[Finding], int, str, int]:
         started = time.monotonic()
@@ -70,7 +73,8 @@ class TargetEngine:
 
         async with self.make_http(stop_event, counter) as http:
             ctx = ScanContext(target=target, config=self.config, scope=self.scope,
-                              http=http, stop_event=stop_event, counter=counter)
+                              http=http, stop_event=stop_event, counter=counter,
+                              evidence=self.evidence)
             try:
                 await asyncio.wait_for(self._run_modules(ctx, findings, module_timeout),
                                        timeout=target_timeout)
