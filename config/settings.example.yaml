@@ -10,12 +10,16 @@ scan:
   module_timeout: 120
 scope:
   authorized: false
+  program_name: default
   allow_private_targets: false
   allow_subdomains: true
   allow_out_of_scope_redirects: false
   allowed_domains: []
+  include_patterns: []
+  exclude_patterns: []
   max_targets: 500
 active:
+  safe_mode: false
   xss: true
   sqli: true
   ssti: true

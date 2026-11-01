@@ -1,18 +1,17 @@
-"""SQLite persistence: scans, targets, findings, checkpoints, audit trail."""
+"""SQLite persistence: scans, targets, findings, checkpoints, audit trail, search & resume."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
+from pathlib import Path
 import sqlite3
 import threading
-import uuid
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable
+import uuid
 
 from core.finding import Finding
 
 SCHEMA = """
-PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
 PRAGMA foreign_keys=ON;
 
@@ -23,7 +22,9 @@ CREATE TABLE IF NOT EXISTS scans (
     status TEXT NOT NULL DEFAULT 'running',
     config_json TEXT,
     total_targets INTEGER DEFAULT 0,
-    note TEXT
+    note TEXT,
+    tool_versions_json TEXT,
+    report_paths_json TEXT
 );
 CREATE TABLE IF NOT EXISTS targets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,10 +45,13 @@ CREATE TABLE IF NOT EXISTS findings (
     scan_id TEXT NOT NULL REFERENCES scans(id) ON DELETE CASCADE,
     target_url TEXT NOT NULL,
     url TEXT,
+    endpoint TEXT,
     category TEXT, module TEXT, title TEXT, severity TEXT,
     confidence TEXT, description TEXT, evidence TEXT,
     detection_method TEXT, cwe TEXT, cve TEXT, remediation TEXT,
-    verification_status TEXT, parameter TEXT, tags TEXT, created_at TEXT
+    verification_status TEXT, parameter TEXT, tags TEXT,
+    owasp_reference TEXT, wstg_reference TEXT, impact TEXT,
+    false_positive_notes TEXT, test_id TEXT, created_at TEXT
 );
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,8 +80,24 @@ class Database:
         self._conn = sqlite3.connect(self.path, check_same_thread=False, timeout=30)
         self._conn.row_factory = sqlite3.Row
         with self._lock:
+            try:
+                self._conn.execute("PRAGMA journal_mode=WAL;")
+            except sqlite3.OperationalError:
+                self._conn.execute("PRAGMA journal_mode=DELETE;")
             self._conn.executescript(SCHEMA)
+            self._ensure_columns()
             self._conn.commit()
+
+    def _ensure_columns(self) -> None:
+        scan_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(scans)").fetchall()}
+        for col in ("tool_versions_json", "report_paths_json"):
+            if col not in scan_cols:
+                self._conn.execute(f"ALTER TABLE scans ADD COLUMN {col} TEXT")
+
+        finding_cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(findings)").fetchall()}
+        for col in ("endpoint", "owasp_reference", "wstg_reference", "impact", "false_positive_notes", "test_id"):
+            if col not in finding_cols:
+                self._conn.execute(f"ALTER TABLE findings ADD COLUMN {col} TEXT")
 
     # ---- lifecycle --------------------------------------------------------
     def close(self) -> None:
@@ -88,19 +108,51 @@ class Database:
             except sqlite3.Error:
                 pass
 
-    def create_scan(self, config_json: dict, total: int, note: str = "") -> str:
+    def create_scan(self, config_json: dict, total: int, note: str = "",
+                    tool_versions: dict | None = None) -> str:
         scan_id = uuid.uuid4().hex[:12]
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT INTO scans (id, started_at, status, config_json, total_targets, note)"
-                " VALUES (?,?,?,?,?,?)",
-                (scan_id, _now(), "running", json.dumps(config_json), total, note))
+                "INSERT INTO scans (id, started_at, status, config_json, total_targets, note, tool_versions_json)"
+                " VALUES (?,?,?,?,?,?,?)",
+                (scan_id, _now(), "running", json.dumps(config_json), total, note,
+                 json.dumps(tool_versions or {})),
+            )
         return scan_id
+
+    def reopen_scan(self, scan_id: str) -> None:
+        """Mark an interrupted scan as running again for in-place resumption."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE scans SET status='running', finished_at=NULL WHERE id=?",
+                (scan_id,),
+            )
+            self._conn.execute(
+                "UPDATE targets SET status='pending' WHERE scan_id=? AND status='running'",
+                (scan_id,),
+            )
+
+    def unfinished_target_urls(self, scan_id: str) -> list[str]:
+        """Return target URLs that have not yet completed ('pending' or 'running')."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT url FROM targets WHERE scan_id=? AND status IN ('pending','running') ORDER BY id",
+                (scan_id,),
+            ).fetchall()
+        return [r["url"] for r in rows]
 
     def finish_scan(self, scan_id: str, status: str = "complete") -> None:
         with self._lock, self._conn:
             self._conn.execute("UPDATE scans SET status=?, finished_at=? WHERE id=?",
                                (status, _now(), scan_id))
+
+    def save_report_paths(self, scan_id: str, paths: dict[str, Any]) -> None:
+        clean = {k: str(v) for k, v in (paths or {}).items() if v is not None}
+        with self._lock, self._conn:
+            self._conn.execute(
+                "UPDATE scans SET report_paths_json=? WHERE id=?",
+                (json.dumps(clean), scan_id),
+            )
 
     def add_targets(self, scan_id: str, urls: Iterable[str]) -> int:
         n = 0
@@ -141,16 +193,26 @@ class Database:
     def add_findings(self, scan_id: str, findings: list[Finding]) -> None:
         if not findings:
             return
-        rows = [(f.finding_id, scan_id, f.target, f.url, f.category, f.module, f.title,
-                 f.severity, f.confidence, f.description, f.evidence, f.detection_method,
-                 f.cwe, f.cve, f.remediation, f.verification_status, f.parameter,
-                 json.dumps(f.tags), f.timestamp) for f in findings]
+        rows = [
+            (
+                f.finding_id, scan_id, f.target, f.url, f.endpoint, f.category,
+                f.module, f.title, f.severity, f.confidence, f.description,
+                f.evidence, f.detection_method, f.cwe, f.cve, f.remediation,
+                f.verification_status, f.parameter, json.dumps(f.tags),
+                f.owasp_reference, f.wstg_reference, f.impact,
+                f.false_positive_notes, f.test_id, f.timestamp,
+            )
+            for f in findings
+        ]
         with self._lock, self._conn:
             self._conn.executemany(
-                "INSERT INTO findings (finding_id, scan_id, target_url, url, category,"
-                " module, title, severity, confidence, description, evidence,"
+                "INSERT INTO findings (finding_id, scan_id, target_url, url, endpoint,"
+                " category, module, title, severity, confidence, description, evidence,"
                 " detection_method, cwe, cve, remediation, verification_status, parameter,"
-                " tags, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                " tags, owasp_reference, wstg_reference, impact, false_positive_notes,"
+                " test_id, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                rows,
+            )
 
     def audit(self, scan_id: str | None, event: str, detail: str = "") -> None:
         with self._lock, self._conn:
@@ -193,6 +255,42 @@ class Database:
              " WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, id"
         with self._lock:
             return self._conn.execute(q, p).fetchall()
+
+    def search_findings(
+        self,
+        scan_id: str | None = None,
+        severity: str | None = None,
+        verification_status: str | None = None,
+        category: str | None = None,
+        query: str | None = None,
+        limit: int = 200,
+    ) -> list[sqlite3.Row]:
+        clauses = ["1=1"]
+        params: list[Any] = []
+        if scan_id:
+            clauses.append("scan_id=?")
+            params.append(scan_id)
+        if severity:
+            clauses.append("severity=?")
+            params.append(severity.upper())
+        if verification_status:
+            clauses.append("verification_status=?")
+            params.append(verification_status.upper())
+        if category:
+            clauses.append("category=?")
+            params.append(category)
+        if query:
+            clauses.append("(title LIKE ? OR description LIKE ? OR target_url LIKE ?)")
+            like = f"%{query}%"
+            params.extend([like, like, like])
+        params.append(limit)
+        sql = (
+            f"SELECT * FROM findings WHERE {' AND '.join(clauses)} "
+            "ORDER BY CASE severity WHEN 'CRITICAL' THEN 0 WHEN 'HIGH' THEN 1 "
+            "WHEN 'MEDIUM' THEN 2 WHEN 'LOW' THEN 3 ELSE 4 END, id DESC LIMIT ?"
+        )
+        with self._lock:
+            return self._conn.execute(sql, params).fetchall()
 
     def recent_scans(self, limit: int = 20) -> list[sqlite3.Row]:
         with self._lock:

@@ -32,14 +32,18 @@ DEFAULTS: dict[str, Any] = {
         "user_agent": "TSMSS/1.0 (+authorized-security-audit; Termux)",
     },
     "scope": {
+        "program_name": "default",
         "authorized": False,
         "allow_private_targets": False,
         "allow_subdomains": True,
         "allow_out_of_scope_redirects": False,
         "allowed_domains": [],
+        "include_patterns": [],
+        "exclude_patterns": [],
         "max_targets": 500,
     },
     "active": {
+        "safe_mode": False,
         "xss": True,
         "sqli": True,
         "ssti": True,
@@ -105,12 +109,96 @@ SEVERITY_WEIGHTS = {"CRITICAL": 25, "HIGH": 12, "MEDIUM": 5, "LOW": 2, "INFO": 0
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
 KNOWN_MODULES: tuple[str, ...] = (
-    "dns_security", "ssl_tls", "http_security", "cookies", "cors",
+    "reconnaissance", "dns_security", "ssl_tls", "http_security", "cookies", "cors",
     "information_disclosure", "framework_audit", "api_security",
     "authentication", "authorization", "dependency_audit",
-    "vulnerability_indicators", "infrastructure", "external_tools",
+    "vulnerability_indicators", "source_code", "infrastructure", "external_tools",
 )
 VALID_TOOL_MODES: tuple[str, ...] = ("auto", "on", "off")
+
+PROFILES: dict[str, dict[str, Any]] = {
+    "quick": {
+        "scan": {
+            "concurrency_targets": 5,
+            "max_requests_per_second": 8.0,
+            "per_host_requests_per_second": 3.0,
+            "delay_between_requests": 0.05,
+            "request_timeout": 10,
+            "module_timeout": 45,
+        },
+        "active": {"max_params_per_target": 8},
+        "modules": {"disabled": ["infrastructure", "external_tools", "dns_security"]},
+    },
+    "standard": {
+        "scan": {
+            "concurrency_targets": 3,
+            "max_requests_per_second": 4.0,
+            "per_host_requests_per_second": 1.5,
+            "delay_between_requests": 0.12,
+            "request_timeout": 20,
+            "module_timeout": 120,
+        },
+        "active": {"safe_mode": False, "max_params_per_target": 25},
+        "modules": {"disabled": []},
+    },
+    "passive": {
+        "scan": {
+            "concurrency_targets": 2,
+            "max_requests_per_second": 1.5,
+            "per_host_requests_per_second": 0.8,
+            "delay_between_requests": 0.4,
+            "request_timeout": 20,
+            "module_timeout": 120,
+        },
+        "active": {"safe_mode": True, "max_params_per_target": 15},
+        "infra": {"enable_nmap": False},
+        "modules": {"disabled": ["external_tools"]},
+    },
+    "stealth": {
+        "scan": {
+            "concurrency_targets": 1,
+            "max_requests_per_second": 0.8,
+            "per_host_requests_per_second": 0.4,
+            "delay_between_requests": 0.75,
+            "request_timeout": 25,
+            "module_timeout": 180,
+        },
+        "active": {"safe_mode": True, "max_params_per_target": 10},
+        "infra": {"enable_nmap": False},
+        "modules": {"disabled": ["external_tools"]},
+    },
+    "deep": {
+        "scan": {
+            "concurrency_targets": 3,
+            "max_requests_per_second": 4.0,
+            "per_host_requests_per_second": 1.5,
+            "delay_between_requests": 0.10,
+            "request_timeout": 25,
+            "module_timeout": 180,
+        },
+        "active": {"max_params_per_target": 40, "max_payloads_per_param": 6},
+        "modules": {"disabled": []},
+    },
+    "source": {
+        "scan": {
+            "concurrency_targets": 1,
+            "max_requests_per_second": 2.0,
+            "per_host_requests_per_second": 1.0,
+            "request_timeout": 15,
+            "module_timeout": 120,
+        },
+        "active": {"safe_mode": True},
+        "modules": {
+            "disabled": [
+                "dns_security", "ssl_tls", "http_security", "cookies", "cors",
+                "information_disclosure", "framework_audit", "api_security",
+                "authentication", "authorization", "vulnerability_indicators",
+                "infrastructure", "external_tools",
+            ]
+        },
+    },
+}
+VALID_PROFILES: tuple[str, ...] = tuple(PROFILES.keys())
 
 
 def _known_tool_ids() -> set[str]:
@@ -157,6 +245,12 @@ class Config:
 
     def update(self, mapping: dict[str, Any]) -> None:
         self.data = _deep_merge(self.data, mapping)
+
+    def apply_profile(self, name: str) -> None:
+        key = (name or "").strip().lower()
+        if key not in PROFILES:
+            raise ValueError(f"Unknown profile '{name}'. Choose from: {', '.join(VALID_PROFILES)}")
+        self.update(PROFILES[key])
 
     def snapshot(self) -> dict[str, Any]:
         return copy.deepcopy(self.data)
