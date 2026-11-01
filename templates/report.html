@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TSMSS Security Report $scan_id</title>
+<style>
+:root{
+  --bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--line:#30363d;--fg:#e6edf3;
+  --dim:#8b949e;--crit:#f85149;--high:#ff8c42;--med:#e3b341;--low:#58a6ff;
+  --info:#8b949e;--ok:#3fb950;--accent:#1f6feb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:16px;max-width:1100px;margin:0 auto}
+h1,h2,h3,h4{margin:0 0 .5em;line-height:1.25}
+h1{font-size:1.6rem;border-bottom:2px solid var(--accent);padding-bottom:.4em}
+h2{font-size:1.15rem;margin-top:2em;color:var(--accent);text-transform:uppercase;
+  letter-spacing:.06em;font-size:.85rem}
+h3{font-size:1.05rem;display:flex;justify-content:space-between;gap:12px;
+  align-items:baseline;flex-wrap:wrap;border-left:3px solid var(--accent);padding-left:10px}
+.meta{color:var(--dim);font-size:.82rem;margin:.2em 0 1em}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:14px;margin:12px 0}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px}
+.kpi .v{font-size:1.5rem;font-weight:700}
+.kpi .l{color:var(--dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}
+.grade{font-weight:700;padding:2px 10px;border-radius:999px;font-size:.9rem}
+.g-a{background:#0f3d1f;color:var(--ok)}.g-b{background:#173a1f;color:#7ee787}
+.g-c{background:#3d3410;color:var(--med)}.g-d{background:#3d2a10;color:var(--high)}
+.g-e,.g-f{background:#3d1414;color:var(--crit)}
+table{width:100%;border-collapse:collapse;font-size:.86rem}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
+th{color:var(--dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.07em}
+.st{font-weight:600}.st-done{color:var(--ok)}.st-failed{color:var(--crit)}
+.sev{font-weight:700;font-size:.7rem;padding:2px 7px;border-radius:4px;
+  text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.sev-critical{background:var(--crit);color:#fff}.sev-high{background:var(--high);color:#111}
+.sev-medium{background:var(--med);color:#111}.sev-low{background:var(--low);color:#111}
+.sev-info{background:var(--info);color:#111}
+.card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;
+  border-radius:8px;padding:14px;margin:12px 0}
+.sev-border-critical{border-left-color:var(--crit)}
+.sev-border-high{border-left-color:var(--high)}
+.sev-border-medium{border-left-color:var(--med)}
+.sev-border-low{border-left-color:var(--low)}
+.sev-border-info{border-left-color:var(--info)}
+.card header{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px}
+.card h4{font-size:.98rem;margin:0}
+.fid{color:var(--dim);font-size:.72rem;font-family:ui-monospace,monospace}
+dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:.8rem;margin:.4em 0}
+dt{color:var(--dim)}dd{margin:0}
+pre{background:#0a0d12;border:1px solid var(--line);border-radius:6px;padding:10px;
+  overflow-x:auto;font-size:.76rem;white-space:pre-wrap;word-break:break-word;
+  max-height:340px}
+code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.82rem}
+details{margin:.6em 0}summary{cursor:pointer;color:var(--accent);font-size:.82rem}
+.desc{margin:.5em 0}.fix{font-size:.85rem;border-top:1px dashed var(--line);
+  padding-top:.6em;color:#a5d6ff}
+.clean{color:var(--ok);font-size:.86rem}
+ul.lim{color:var(--dim);font-size:.84rem;padding-left:1.2em}
+footer{margin-top:2.5em;padding-top:1em;border-top:1px solid var(--line);
+  color:var(--dim);font-size:.76rem}
+</style>
+</head>
+<body>
+<h1>TSMSS Security Assessment</h1>
+<p class="meta">Scan <code>$scan_id</code> &middot; generated $generated &middot; $note</p>
+
+<h2>Executive summary</h2>
+<div class="panel"><p>$executive_summary</p></div>
+
+<div class="kpis">
+  <div class="kpi"><div class="v"><span class="grade $grade_class">$grade</span></div>
+    <div class="l">Grade</div></div>
+  <div class="kpi"><div class="v">$score</div><div class="l">Score / 100</div></div>
+  <div class="kpi"><div class="v">$total_findings</div><div class="l">Findings</div></div>
+  <div class="kpi"><div class="v">$target_count</div><div class="l">Targets</div></div>
+</div>
+
+<h2>Severity distribution</h2>
+<div class="panel"><table><tbody>$severity_rows</tbody></table></div>
+
+<h2>Target inventory</h2>
+<div class="panel"><table>
+<thead><tr><th>Target</th><th>Status</th><th>Score</th><th>Findings</th></tr></thead>
+<tbody>$target_rows</tbody></table></div>
+
+<h2>Detailed findings</h2>
+$sections
+
+<h2>Scoring methodology</h2>
+<div class="panel"><p style="font-size:.84rem;color:#8b949e">$methodology</p></div>
+
+<h2>Scan limitations</h2>
+<div class="panel"><ul class="lim">$limitations</ul></div>
+
+<footer>
+TSMSS &mdash; non-destructive authorized assessment. Confidence levels describe evidence
+strength, not exploitability. Confirm all HIGH and MEDIUM items manually before remediation
+planning.
+</footer>
+</body>
+</html>
