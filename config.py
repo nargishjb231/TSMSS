@@ -104,6 +104,25 @@ DEFAULTS: dict[str, Any] = {
 SEVERITY_WEIGHTS = {"CRITICAL": 25, "HIGH": 12, "MEDIUM": 5, "LOW": 2, "INFO": 0}
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
 
+KNOWN_MODULES: tuple[str, ...] = (
+    "dns_security", "ssl_tls", "http_security", "cookies", "cors",
+    "information_disclosure", "framework_audit", "api_security",
+    "authentication", "authorization", "dependency_audit",
+    "vulnerability_indicators", "infrastructure", "external_tools",
+)
+VALID_TOOL_MODES: tuple[str, ...] = ("auto", "on", "off")
+
+
+def _known_tool_ids() -> set[str]:
+    tools_file = CONFIG_DIR / "tools.yaml"
+    if not tools_file.exists():
+        return set()
+    try:
+        raw = yaml.safe_load(tools_file.read_text(encoding="utf-8")) or []
+        return {str(item["id"]) for item in raw if isinstance(item, dict) and "id" in item}
+    except Exception:
+        return set()
+
 
 def _deep_merge(base: dict, overlay: dict) -> dict:
     out = copy.deepcopy(base)
@@ -139,6 +158,12 @@ class Config:
     def update(self, mapping: dict[str, Any]) -> None:
         self.data = _deep_merge(self.data, mapping)
 
+    def snapshot(self) -> dict[str, Any]:
+        return copy.deepcopy(self.data)
+
+    def restore(self, snap: dict[str, Any]) -> None:
+        self.data = copy.deepcopy(snap)
+
     def save(self) -> None:
         with _LOCK:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -149,15 +174,48 @@ class Config:
     def validate(self) -> list[str]:
         errs: list[str] = []
         c = self.get("scan.concurrency_targets", 3)
-        if not isinstance(c, int) or not 1 <= c <= 20:
+        if isinstance(c, bool) or not isinstance(c, int) or not 1 <= c <= 20:
             errs.append("scan.concurrency_targets must be 1..20")
         rps = self.get("scan.max_requests_per_second", 4.0)
-        if not isinstance(rps, (int, float)) or rps <= 0:
+        if isinstance(rps, bool) or not isinstance(rps, (int, float)) or rps <= 0:
             errs.append("scan.max_requests_per_second must be > 0")
-        if self.get("scan.max_retries", 3) > 10:
-            errs.append("scan.max_retries should be <= 10")
-        if self.get("scan.request_timeout", 20) < 3:
+        retries = self.get("scan.max_retries", 3)
+        if isinstance(retries, bool) or not isinstance(retries, int) or not 0 <= retries <= 10:
+            errs.append("scan.max_retries should be 0..10")
+        timeout = self.get("scan.request_timeout", 20)
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 3:
             errs.append("scan.request_timeout should be >= 3s")
+
+        disabled_mods = self.get("modules.disabled", [])
+        if not isinstance(disabled_mods, list) or any(not isinstance(m, str) for m in disabled_mods):
+            errs.append("modules.disabled must be a list of module names")
+        else:
+            unknown_mods = [m for m in disabled_mods if m not in KNOWN_MODULES]
+            if unknown_mods:
+                errs.append(f"modules.disabled contains unknown module(s): {', '.join(unknown_mods)}")
+
+        t_mode = self.get("tools.mode", "auto")
+        if not isinstance(t_mode, str) or t_mode not in VALID_TOOL_MODES:
+            errs.append(f"tools.mode must be one of: {', '.join(VALID_TOOL_MODES)}")
+        t_runtime = self.get("tools.max_runtime", 180)
+        if isinstance(t_runtime, bool) or not isinstance(t_runtime, int) or not 5 <= t_runtime <= 3600:
+            errs.append("tools.max_runtime must be 5..3600")
+        t_rate = self.get("tools.rate_limit", 5)
+        if isinstance(t_rate, bool) or not isinstance(t_rate, int) or not 1 <= t_rate <= 1000:
+            errs.append("tools.rate_limit must be 1..1000")
+        t_root = self.get("tools.allow_root_tools", False)
+        if not isinstance(t_root, bool):
+            errs.append("tools.allow_root_tools must be a boolean")
+
+        known_tools = _known_tool_ids()
+        for list_key in ("tools.enabled", "tools.disabled"):
+            val = self.get(list_key, [])
+            if not isinstance(val, list) or any(not isinstance(x, str) for x in val):
+                errs.append(f"{list_key} must be a list of tool IDs")
+            elif known_tools:
+                unknown = [x for x in val if x not in known_tools]
+                if unknown:
+                    errs.append(f"{list_key} contains unknown tool(s): {', '.join(unknown)}")
         return errs
 
 

@@ -198,5 +198,63 @@ class TestScheduler(unittest.TestCase):
         self.assertLessEqual(max(active_peaks), 2)
 
 
+class TestConfigAndSettingsMenu(unittest.TestCase):
+    def test_validate_modules_and_tools(self):
+        from config import Config
+        cfg = Config()
+        self.assertEqual(cfg.validate(), [])
+
+        cfg.set("modules.disabled", ["ssl_tls", "bogus_mod"])
+        errs = cfg.validate()
+        self.assertTrue(any("modules.disabled" in e and "bogus_mod" in e for e in errs), errs)
+
+        cfg.set("modules.disabled", ["ssl_tls"])
+        cfg.set("tools.mode", "invalid_mode")
+        cfg.set("tools.max_runtime", 1)
+        cfg.set("tools.rate_limit", 0)
+        cfg.set("tools.enabled", ["unknown_tool_xyz"])
+        errs2 = cfg.validate()
+        self.assertTrue(any("tools.mode" in e for e in errs2), errs2)
+        self.assertTrue(any("tools.max_runtime" in e for e in errs2), errs2)
+        self.assertTrue(any("tools.rate_limit" in e for e in errs2), errs2)
+        self.assertTrue(any("tools.enabled" in e for e in errs2), errs2)
+
+    def test_settings_menu_exposes_modules_and_tools_with_rollback(self):
+        from unittest.mock import patch
+        import main
+        from config import Config
+
+        cfg = Config()
+        main.RUNTIME["config"] = cfg
+        self.assertIn("modules.disabled", main.SETTINGS_KEYS)
+        for tk in ("tools.mode", "tools.max_runtime", "tools.rate_limit",
+                   "tools.allow_root_tools", "tools.enabled", "tools.disabled"):
+            self.assertIn(tk, main.SETTINGS_KEYS)
+
+        # Edit modules.disabled and tools.mode, then rollback
+        responses = iter([
+            "modules.disabled",
+            "ssl_tls, dns_security",
+            "tools.mode",
+            "off",
+            "rollback",
+        ])
+        with patch.object(main.Prompt, "ask", side_effect=lambda *a, **kw: next(responses)):
+            main.handle_settings()
+        self.assertEqual(cfg.get("modules.disabled"), [])
+        self.assertEqual(cfg.get("tools.mode"), "auto")
+
+        # Edit to invalid value, attempt save, confirm rollback on validation error
+        responses_invalid = iter([
+            "modules.disabled",
+            "not_a_real_module",
+            "",
+        ])
+        with patch.object(main.Prompt, "ask", side_effect=lambda *a, **kw: next(responses_invalid)), \
+             patch.object(main.Confirm, "ask", return_value=True):
+            main.handle_settings()
+        self.assertEqual(cfg.get("modules.disabled"), [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -240,25 +240,54 @@ def handle_file() -> None:
     asyncio.run(run_scan(urls, f"file:{path}"))
 
 
+SETTINGS_KEYS: tuple[str, ...] = (
+    "scan.concurrency_targets", "scan.max_requests_per_second",
+    "scan.per_host_requests_per_second", "scan.request_timeout",
+    "scan.batch_size", "scan.delay_between_requests",
+    "scope.allow_private_targets", "scope.allow_subdomains",
+    "scope.max_targets", "safety.max_total_requests_per_target",
+    "active.xss", "active.sqli", "active.ssti", "active.xxe",
+    "infra.enable_nmap", "safety.check_battery",
+    "modules.disabled",
+    "tools.mode", "tools.max_runtime", "tools.rate_limit",
+    "tools.allow_root_tools", "tools.enabled", "tools.disabled",
+)
+
+
+def _parse_list_setting(raw: str) -> list[str]:
+    text = (raw or "").strip()
+    if not text or text.lower() in ("none", "[]"):
+        return []
+    if text.startswith("["):
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+    return [part.strip() for part in text.split(",") if part.strip()]
+
+
 def handle_settings() -> None:
     config = RUNTIME["config"]
+    snapshot = config.snapshot()
     while True:
         table = Table("key", "value", title="Current settings", show_header=True)
-        for key in ("scan.concurrency_targets", "scan.max_requests_per_second",
-                    "scan.per_host_requests_per_second", "scan.request_timeout",
-                    "scan.batch_size", "scan.delay_between_requests",
-                    "scope.allow_private_targets", "scope.allow_subdomains",
-                    "scope.max_targets", "safety.max_total_requests_per_target",
-                    "active.xss", "active.sqli", "active.ssti", "active.xxe",
-                    "infra.enable_nmap", "safety.check_battery"):
+        for key in SETTINGS_KEYS:
             table.add_row(key, str(config.get(key)))
         console.print(table)
-        key = Prompt.ask("Key to change (blank to save+exit)", default="", show_default=False)
+        key = Prompt.ask("Key to change (blank to save+exit, 'rollback' to discard)",
+                         default="", show_default=False).strip()
+        if key.lower() in ("rollback", "cancel", "abort"):
+            config.restore(snapshot)
+            console.print("[yellow]Changes discarded; rolled back to previous settings.[/yellow]")
+            return
         if not key:
             errs = config.validate()
             if errs:
                 for e in errs:
                     console.print(f"[red]{e}[/red]")
+                if Confirm.ask("Discard invalid changes and rollback?", default=True):
+                    config.restore(snapshot)
+                    console.print("[yellow]Rolled back invalid changes.[/yellow]")
+                    return
                 continue
             config.save()
             console.print("[green]Saved.[/green]")
@@ -272,7 +301,18 @@ def handle_settings() -> None:
         elif isinstance(current, int):
             config.set(key, IntPrompt.ask(key, default=current))
         elif isinstance(current, float):
-            config.set(key, float(Prompt.ask(key, default=str(current))))
+            raw = Prompt.ask(key, default=str(current))
+            try:
+                config.set(key, float(raw))
+            except ValueError:
+                console.print("[red]Invalid number.[/red]")
+        elif isinstance(current, list):
+            default_str = ", ".join(str(x) for x in current)
+            raw = Prompt.ask(f"{key} (comma-separated or JSON list)", default=default_str)
+            try:
+                config.set(key, _parse_list_setting(raw))
+            except json.JSONDecodeError:
+                console.print("[red]Invalid list format.[/red]")
         else:
             raw = Prompt.ask(key, default=str(current))
             try:
