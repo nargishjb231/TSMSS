@@ -17,14 +17,14 @@ MODULE_ORDER = [
     "dns_security", "ssl_tls", "http_security", "cookies", "cors",
     "information_disclosure", "framework_audit", "api_security",
     "authentication", "authorization", "dependency_audit",
-    "vulnerability_indicators", "infrastructure",
+    "vulnerability_indicators", "infrastructure", "external_tools",
 ]
 
 
 def build_modules(rules: dict) -> list:
     from modules import (api_security, authentication, authorization, cookies, cors,
                          dependency_audit, dns_security, framework_audit, http_security,
-                         information_disclosure, infrastructure, ssl_tls,
+                         external_tools, information_disclosure, infrastructure, ssl_tls,
                          vulnerability_indicators)
     registry = {
         "dns_security": dns_security.DnsSecurityModule,
@@ -40,6 +40,7 @@ def build_modules(rules: dict) -> list:
         "dependency_audit": dependency_audit.DependencyAuditModule,
         "vulnerability_indicators": vulnerability_indicators.VulnerabilityIndicatorModule,
         "infrastructure": infrastructure.InfrastructureModule,
+        "external_tools": external_tools.ExternalToolsModule,
     }
     return [registry[name]() for name in MODULE_ORDER if name in registry]
 
@@ -50,11 +51,12 @@ def score(findings: list[Finding]) -> tuple[int, str]:
 
 
 class TargetEngine:
-    def __init__(self, config, rules: dict, scope, make_http):
+    def __init__(self, config, rules: dict, scope, make_http, evidence=None):
         self.config = config
         self.rules = rules
         self.scope = scope
         self.make_http = make_http
+        self.evidence = evidence
         self.modules = build_modules(rules)
 
     async def scan(self, url: str, stop_event: asyncio.Event) -> tuple[list[Finding], int, str, int]:

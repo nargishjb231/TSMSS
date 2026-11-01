@@ -89,6 +89,14 @@ DEFAULTS: dict[str, Any] = {
         "evidence_max_bytes": 8192,
         "redact_patterns": [],
     },
+    "tools": {
+        "mode": "auto",
+        "max_runtime": 180,
+        "rate_limit": 5,
+        "allow_root_tools": False,
+        "enabled": [],
+        "disabled": [],
+    },
     "logging": {"level": "INFO", "audit_log": True},
 }
 

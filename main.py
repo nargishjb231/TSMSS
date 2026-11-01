@@ -106,7 +106,7 @@ async def run_scan(urls: list[str], note: str = "", auto_reports: bool = False) 
     limiter = RateLimiter(config.get("scan.max_requests_per_second", 4.0),
                           config.get("scan.per_host_requests_per_second", 1.5))
     engine = TargetEngine(config, cfgmod.load_rules(), scope,
-                          make_http_factory(config, scope, limiter))
+                          make_http_factory(config, scope, limiter), evidence)
     counters: Counter = Counter()
     evidence = EvidenceStore(BASE / "reports" / scan_id / "evidence",
                              int(config.get("reporting.evidence_max_bytes", 8192)))

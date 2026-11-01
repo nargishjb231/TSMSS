@@ -1,0 +1,231 @@
+# External tool registry. Each entry is optional: a missing binary is skipped.
+# {target} {host} {root} {rate} {outfile} are substituted. argv only, no shell.
+#
+# needs_root: true  -> skipped unless tools.allow_root_tools is on
+# output: jsonl | lines | json
+
+- id: nuclei
+  bin: nuclei
+  category: Vulnerability
+  install: go
+  pkg: github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+  output: jsonl
+  args: ["-u", "{target}", "-jsonl", "-silent", "-severity", "critical,high,medium",
+         "-rl", "{rate}", "-timeout", "10", "-no-interactsh", "-stats=false"]
+  timeout: 150
+  confidence: HIGH CONFIDENCE
+  map: {title: info.name, severity: info.severity, url: matched-at,
+        description: info.description, remediation: info.remediation,
+        cwe: info.classification.cwe-id}
+
+- id: httpx
+  bin: httpx
+  category: Infrastructure
+  install: go
+  pkg: github.com/projectdiscovery/httpx/cmd/httpx@latest
+  output: jsonl
+  args: ["-u", "{target}", "-json", "-silent", "-title", "-tech-detect",
+         "-status-code", "-cdn", "-cname", "-rl", "{rate}", "-timeout", "10"]
+  timeout: 60
+  confidence: HIGH CONFIDENCE
+  map: {title: tech, severity: "", url: url}
+
+- id: subfinder
+  bin: subfinder
+  category: DNS Security
+  install: go
+  pkg: github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+  output: lines
+  args: ["-d", "{host}", "-silent", "-timeout", "10"]
+  timeout: 90
+  confidence: HIGH CONFIDENCE
+  line_title: "Subdomain discovered (passive): {line}"
+  line_severity: INFO
+
+- id: dnsx
+  bin: dnsx
+  category: DNS Security
+  install: go
+  pkg: github.com/projectdiscovery/dnsx/cmd/dnsx@latest
+  output: lines
+  args: ["-d", "{host}", "-silent", "-a", "-cname", "-resp", "-rl", "{rate}"]
+  timeout: 90
+  confidence: HIGH CONFIDENCE
+  line_title: "Resolved record: {line}"
+  line_severity: INFO
+
+- id: katana
+  bin: katana
+  category: Discovery
+  install: go
+  pkg: github.com/projectdiscovery/katana/cmd/katana@latest
+  output: lines
+  args: ["-u", "{target}", "-silent", "-d", "2", "-rl", "{rate}", "-timeout", "10",
+         "-jc", "-kf", "all"]
+  timeout: 120
+  confidence: MEDIUM CONFIDENCE
+  line_title: "Crawled URL: {line}"
+  line_severity: INFO
+
+- id: dalfox
+  bin: dalfox
+  category: Vulnerability
+  install: go
+  pkg: github.com/hahwul/dalfox/v2@latest
+  output: lines
+  args: ["url", "{target}", "--silence", "--no-spinner", "--worker", "3",
+         "--delay", "300", "--skip-bav"]
+  timeout: 120
+  confidence: HIGH CONFIDENCE
+  line_title: "XSS candidate (dalfox): {line}"
+  line_severity: HIGH
+
+- id: ffuf
+  bin: ffuf
+  category: Discovery
+  install: go
+  pkg: github.com/ffuf/ffuf/v2@latest
+  output: jsonl
+  args: ["-u", "{root}/FUZZ", "-w", "{wordlist}", "-mc", "200,204,301,302,401,403",
+         "-rate", "{rate}", "-t", "10", "-s", "-of", "json", "-o", "{outfile}"]
+  timeout: 150
+  confidence: MEDIUM CONFIDENCE
+  map: {title: input.FUZZ, severity: "", url: url}
+  needs_wordlist: true
+
+- id: subzy
+  bin: subzy
+  category: DNS Security
+  install: go
+  pkg: github.com/LukaSikic/subzy@latest
+  output: lines
+  args: ["run", "--targets", "{host}", "--hide_fails"]
+  timeout: 120
+  confidence: HIGH CONFIDENCE
+  line_title: "Subdomain takeover candidate (subzy): {line}"
+  line_severity: HIGH
+
+- id: crlfuzz
+  bin: crlfuzz
+  category: Vulnerability
+  install: go
+  pkg: github.com/dwisiswant0/crlfuzz/cmd/crlfuzz@latest
+  output: lines
+  args: ["-u", "{target}", "-s"]
+  timeout: 60
+  confidence: HIGH CONFIDENCE
+  line_title: "CRLF injection (crlfuzz): {line}"
+  line_severity: MEDIUM
+
+- id: gau
+  bin: gau
+  category: Discovery
+  install: go
+  pkg: github.com/lc/gau/v2/cmd/gau@latest
+  output: lines
+  args: ["--subs", "{host}"]
+  timeout: 90
+  confidence: MEDIUM CONFIDENCE
+  line_title: "Known URL (gau): {line}"
+  line_severity: INFO
+
+- id: gowitness
+  bin: gowitness
+  category: Infrastructure
+  install: go
+  pkg: github.com/sensepost/gowitness@latest
+  output: lines
+  args: ["scan", "single", "{target}", "--write-db"]
+  timeout: 90
+  confidence: HIGH CONFIDENCE
+  line_title: "Screenshot captured (gowitness)"
+  line_severity: INFO
+
+- id: gitleaks
+  bin: gitleaks
+  category: Application Security
+  install: go
+  pkg: github.com/gitleaks/gitleaks/v8@latest
+  output: jsonl
+  args: ["detect", "--source", "{dir}", "--no-git", "--report-format", "json",
+         "--report-path", "{outfile}", "--exit-code", "0"]
+  timeout: 90
+  confidence: CONFIRMED
+  map: {title: Description, severity: "", url: File, description: Match}
+  needs_dir: true
+
+- id: sqlmap
+  bin: sqlmap
+  category: Vulnerability
+  install: pip
+  pkg: sqlmap
+  output: lines
+  args: ["-u", "{target}", "--batch", "--level", "1", "--risk", "1",
+         "--delay", "1", "--timeout", "15", "--smart", "--output-dir", "/tmp/sqlmap"]
+  timeout: 180
+  confidence: HIGH CONFIDENCE
+  line_title: "SQLi (sqlmap): {line}"
+  line_severity: HIGH
+  only_query: true
+
+- id: wafw00f
+  bin: wafw00f
+  category: Infrastructure
+  install: pip
+  pkg: wafw00f
+  output: lines
+  args: ["{target}"]
+  timeout: 60
+  confidence: HIGH CONFIDENCE
+  line_title: "WAF detected: {line}"
+  line_severity: INFO
+
+- id: dirsearch
+  bin: dirsearch
+  category: Discovery
+  install: pip
+  pkg: dirsearch
+  output: lines
+  args: ["-u", "{target}", "--quiet", "--format", "plain", "--threads", "8",
+         "--delay", "0.3"]
+  timeout: 180
+  confidence: MEDIUM CONFIDENCE
+  line_title: "Path found (dirsearch): {line}"
+  line_severity: LOW
+
+- id: corsy
+  bin: corsy
+  category: API Security
+  install: pip
+  pkg: corsy
+  output: lines
+  args: ["-i", "{target}", "--headers", "User-Agent: TSMSS"]
+  timeout: 60
+  confidence: HIGH CONFIDENCE
+  line_title: "CORS issue (corsy): {line}"
+  line_severity: MEDIUM
+
+- id: arjun
+  bin: arjun
+  category: Discovery
+  install: pip
+  pkg: arjun
+  output: lines
+  args: ["-u", "{target}", "-t", "8", "--passive", "-q"]
+  timeout: 120
+  confidence: MEDIUM CONFIDENCE
+  line_title: "Parameter discovered (arjun): {line}"
+  line_severity: INFO
+
+- id: git-dumper
+  bin: git-dumper
+  category: Application Security
+  install: pip
+  pkg: git-dumper
+  output: lines
+  args: ["{root}/.git", "{dir}"]
+  timeout: 120
+  confidence: CONFIRMED
+  line_title: "Git repository dumped to {dir}"
+  line_severity: HIGH
+  needs_dir: true

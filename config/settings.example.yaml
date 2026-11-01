@@ -37,3 +37,10 @@ safety:
 infra:
   enable_nmap: true
   enable_whois: true
+tools:
+  mode: auto
+  max_runtime: 180
+  rate_limit: 5
+  allow_root_tools: false
+  enabled: []
+  disabled: []

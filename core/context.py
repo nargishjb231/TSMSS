@@ -74,3 +74,4 @@ class ScanContext:
     login_url: str = ""
     login_fields: list = field(default_factory=list)
     csrf_token_present: bool | None = None
+    evidence: object = None
