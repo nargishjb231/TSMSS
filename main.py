@@ -22,7 +22,7 @@ import config as cfgmod
 from config import SEVERITY_ORDER
 from core import termux_api as tap
 from core.database import Database
-from core.engine import TargetEngine, score
+from core.engine import TargetEngine, TargetScanResult, score
 from core.evidence import EvidenceStore
 from core.http_client import HttpClient
 from core.logger import setup as setup_logging
@@ -113,27 +113,27 @@ async def run_scan(urls: list[str], note: str = "", auto_reports: bool = False) 
     counters: Counter = Counter()
     meta = {"id": scan_id, "note": note, "started": True}
 
-    async def worker(url: str) -> tuple:
+    async def worker(url: str) -> TargetScanResult:
         db.set_target_status(scan_id, url, "running")
-        findings, value, extra, requests = await engine.scan(url, stop_event)
-        for f in findings:
+        result = await engine.scan(url, stop_event)
+        for f in result.findings:
             counters[f.severity] += 1
-        if findings and config.get("reporting.include_response_bodies", True):
-            for f in findings:
+        if result.findings and config.get("reporting.include_response_bodies", True):
+            for f in result.findings:
                 if f.evidence:
                     evidence.save(f.finding_id, f.evidence)
-        db.add_findings(scan_id, findings)
-        ok = isinstance(extra, str) and extra in tuple("ABCDEF")
-        return url, findings, extra, "", requests, ok
+        db.add_findings(scan_id, result.findings)
+        return result
 
-    async def on_done(url: str, result: tuple) -> None:
-        _, findings, extra, error, requests, ok = result
-        status = "done" if ok else "failed"
-        value, _ = score(findings)
-        db.set_target_status(scan_id, url, status, error=None if status == "done" else str(extra),
-                             score=value, requests=requests)
+    async def on_done(url: str, result: TargetScanResult) -> None:
+        status = "done" if result.ok else "failed"
+        db.set_target_status(
+            scan_id, url, status,
+            error=None if result.ok else (result.error or "scan failed"),
+            score=result.score, requests=result.requests,
+        )
         db.save_checkpoint(scan_id, {"last_url": url, "completed": True})
-        db.audit(scan_id, "target_done", f"{url} status={status} score={value}")
+        db.audit(scan_id, "target_done", f"{url} status={status} score={result.score}")
 
     scheduler = Scheduler(config, stop_event, on_done)
 

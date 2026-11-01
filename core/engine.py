@@ -5,6 +5,7 @@ import asyncio
 import time
 import traceback
 from collections import Counter
+from dataclasses import dataclass, field
 
 from config import SEVERITY_WEIGHTS
 from core.context import ScanContext, Target
@@ -12,6 +13,18 @@ from core.finding import Finding, score_counts, severity_rank
 from core.logger import get
 
 log = get("tsmss.engine")
+
+
+@dataclass
+class TargetScanResult:
+    url: str
+    findings: list[Finding] = field(default_factory=list)
+    score: int = 100
+    grade: str = "A"
+    requests: int = 0
+    ok: bool = True
+    error: str = ""
+    elapsed_s: int = 0
 
 MODULE_ORDER = [
     "dns_security", "ssl_tls", "http_security", "cookies", "cors",
@@ -81,7 +94,7 @@ class TargetEngine:
         self.disabled_modules = list(config.get("modules.disabled", []) or [])
         self.modules = build_modules(rules, self.disabled_modules)
 
-    async def scan(self, url: str, stop_event: asyncio.Event) -> tuple[list[Finding], int, str, int]:
+    async def scan(self, url: str, stop_event: asyncio.Event) -> TargetScanResult:
         started = time.monotonic()
         counter: dict = {"requests": 0}
         target = Target(url)
@@ -108,9 +121,17 @@ class TargetEngine:
         value, grade = score(findings)
         if not error and not findings and getattr(ctx, "http_unreachable", ""):
             error = getattr(ctx, "http_unreachable")
-        ctx_grade = grade
         elapsed = int(time.monotonic() - started)
-        return findings, value, error or ctx_grade, counter["requests"]
+        return TargetScanResult(
+            url=url,
+            findings=findings,
+            score=value,
+            grade=grade,
+            requests=counter["requests"],
+            ok=not bool(error),
+            error=error,
+            elapsed_s=elapsed,
+        )
 
     async def _run_modules(self, ctx, sink: list, timeout: float) -> None:
         for module in self.modules:

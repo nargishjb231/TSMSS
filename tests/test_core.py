@@ -187,7 +187,8 @@ class TestScheduler(unittest.TestCase):
             active_peaks.append(in_flight)
             await asyncio.sleep(0.01)
             in_flight -= 1
-            return (url, [], "A", "", 1, True)
+            from core.engine import TargetScanResult
+            return TargetScanResult(url=url, findings=[], score=100, grade="A", requests=1, ok=True)
 
         sched = Scheduler(cfg, stop, on_done)
         asyncio.run(sched.run(["https://a.test/", "https://b.test/", "https://c.test/", "https://d.test/"], worker))
@@ -254,6 +255,42 @@ class TestConfigAndSettingsMenu(unittest.TestCase):
              patch.object(main.Confirm, "ask", return_value=True):
             main.handle_settings()
         self.assertEqual(cfg.get("modules.disabled"), [])
+
+
+class TestTargetScanResultDataclass(unittest.TestCase):
+    def test_engine_returns_typed_dataclass_and_report_manager_accepts_it(self):
+        import asyncio
+        import tempfile
+        from config import Config
+        from core.engine import TargetEngine, TargetScanResult, MODULE_ORDER
+        from core.report_manager import ReportManager
+        from core.scope import ScopeGuard
+
+        cfg = Config({"modules": {"disabled": list(MODULE_ORDER)}})
+        scope = ScopeGuard([], allow_private=True)
+
+        class DummyHttp:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                pass
+
+        engine = TargetEngine(cfg, {}, scope, lambda stop, counter: DummyHttp())
+        res = asyncio.run(engine.scan("https://example.com/", asyncio.Event()))
+        self.assertIsInstance(res, TargetScanResult)
+        self.assertEqual(res.url, "https://example.com/")
+        self.assertTrue(res.ok)
+        self.assertEqual(res.score, 100)
+        self.assertEqual(res.grade, "A")
+        self.assertEqual(res.error, "")
+
+        base = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            rm = ReportManager(Path(d), base / "templates" / "report.html")
+            written = rm.write_target_reports({"id": "s1"}, res, [])
+            self.assertTrue(Path(written["json"]).exists())
+            self.assertTrue(Path(written["html"]).exists())
 
 
 if __name__ == "__main__":

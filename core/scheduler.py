@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from core.engine import TargetScanResult
 from core.logger import get
 
 log = get("tsmss.scheduler")
@@ -45,7 +46,7 @@ class Scheduler:
         self.state = BatchState()
 
     async def run(self, urls: list[str],
-                  worker: Callable[[str], Awaitable[tuple]]) -> None:
+                  worker: Callable[[str], Awaitable[TargetScanResult]]) -> None:
         self.state.total = len(urls)
         self.state.pending = len(urls)
         sem = asyncio.Semaphore(self.concurrency)
@@ -60,19 +61,21 @@ class Scheduler:
                 self._report()
                 try:
                     result = await worker(url)
-                    # worker returns an explicit ok flag at index 5; the grade
-                    # letter at index 2 is truthy either way, so it cannot be used
-                    ok = bool(result[5]) if len(result) > 5 else True
+                    ok = bool(result.ok)
                 except asyncio.CancelledError:
                     self.state.skipped += 1
                     raise
                 except Exception as exc:  # noqa: BLE001
                     log.warning("worker crash on %s: %s", url, exc)
-                    result, ok = (url, [], 0, str(exc), 0), False
+                    result = TargetScanResult(
+                        url=url, findings=[], score=0, grade="F",
+                        requests=0, ok=False, error=str(exc),
+                    )
+                    ok = False
                 finally:
                     if url in self.state.current:
                         self.state.current.remove(url)
-                self.state.requests += int(result[4]) if len(result) > 4 else 0
+                self.state.requests += int(result.requests)
                 self.state.pending -= 1
                 if ok:
                     self.state.completed += 1

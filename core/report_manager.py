@@ -62,6 +62,19 @@ class ReportManager:
             (self.base / sub).mkdir(parents=True, exist_ok=True)
 
     # ---- helpers ---------------------------------------------------------
+    @staticmethod
+    def _as_target_dict(target) -> dict:
+        if isinstance(target, dict):
+            return dict(target)
+        return {
+            "url": target.url,
+            "status": "done" if getattr(target, "ok", True) else "failed",
+            "score": getattr(target, "score", 100),
+            "request_count": getattr(target, "requests", 0),
+            "duration_s": getattr(target, "elapsed_s", 0),
+            "error": getattr(target, "error", "") or None,
+        }
+
     def _slug(self, url: str) -> str:
         return re.sub(r"[^A-Za-z0-9]+", "_", url.replace("://", "_"))[:90].strip("_") or "target"
 
@@ -92,8 +105,9 @@ class ReportManager:
         return {"counts": counts, "score": value, "grade": grade, "total": len(rows)}
 
     # ---- JSON ------------------------------------------------------------
-    def json_report(self, scan_meta: dict, targets: list[dict],
+    def json_report(self, scan_meta: dict, targets: list,
                     findings_by_target: dict[str, list[dict]]) -> Path:
+        target_dicts = [self._as_target_dict(t) for t in targets]
         all_rows = [f for rows in findings_by_target.values() for f in rows]
         payload = {
             "tool": "TSMSS", "schema": "1.0",
@@ -103,17 +117,18 @@ class ReportManager:
             "limitations": LIMITATIONS,
             "summary": self.summarize(all_rows),
             "targets": [dict(t, summary=self.summarize(findings_by_target.get(t["url"], [])))
-                        for t in targets],
+                        for t in target_dicts],
             "findings": all_rows,
         }
         path = self._path("json", "combined")
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
 
-    def json_target(self, target: dict, rows: list[dict]) -> Path:
-        path = self._path("json", self._slug(target["url"]))
+    def json_target(self, target, rows: list[dict]) -> Path:
+        td = self._as_target_dict(target)
+        path = self._path("json", self._slug(td["url"]))
         path.write_text(json.dumps({
-            "target": target, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "target": td, "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "summary": self.summarize(rows), "findings": rows}, indent=2, ensure_ascii=False),
             encoding="utf-8")
         return path
@@ -133,8 +148,9 @@ class ReportManager:
         return path
 
     # ---- TXT -------------------------------------------------------------
-    def txt_report(self, scan_meta: dict, targets: list[dict],
+    def txt_report(self, scan_meta: dict, targets: list,
                    findings_by_target: dict[str, list[dict]]) -> Path:
+        targets = [self._as_target_dict(t) for t in targets]
         buf = io.StringIO()
         all_rows = [f for rows in findings_by_target.values() for f in rows]
         s = self.mean_target_score(findings_by_target)
@@ -175,7 +191,8 @@ class ReportManager:
         path.write_text(buf.getvalue(), encoding="utf-8")
         return path
 
-    def txt_target(self, target: dict, rows: list[dict]) -> Path:
+    def txt_target(self, target, rows: list[dict]) -> Path:
+        target = self._as_target_dict(target)
         buf = io.StringIO()
         s = self.summarize(rows)
         buf.write(f"TARGET: {target['url']}\nScore: {s['score']} ({s['grade']})\n\n")
@@ -188,8 +205,9 @@ class ReportManager:
         return path
 
     # ---- HTML ------------------------------------------------------------
-    def html_report(self, scan_meta: dict, targets: list[dict],
+    def html_report(self, scan_meta: dict, targets: list,
                     findings_by_target: dict[str, list[dict]]) -> Path:
+        targets = [self._as_target_dict(t) for t in targets]
         all_rows = [f for rows in findings_by_target.values() for f in rows]
         s = self.mean_target_score(findings_by_target)
         template = Template(self.template_path.read_text(encoding="utf-8"))
@@ -269,13 +287,15 @@ class ReportManager:
         path.write_text(out, encoding="utf-8")
         return path
 
-    def html_target(self, scan_meta: dict, target: dict, rows: list[dict]) -> Path:
-        return self.html_report(scan_meta, [target], {target["url"]: rows})
+    def html_target(self, scan_meta: dict, target, rows: list[dict]) -> Path:
+        td = self._as_target_dict(target)
+        return self.html_report(scan_meta, [td], {td["url"]: rows})
 
     # ---- batch writer ----------------------------------------------------
-    def write_target_reports(self, scan_meta: dict, target: dict, rows: list[dict]) -> dict:
+    def write_target_reports(self, scan_meta: dict, target, rows: list[dict]) -> dict:
+        td = self._as_target_dict(target)
         return {
-            "json": str(self.json_target(target, rows)),
-            "txt": str(self.txt_target(target, rows)),
-            "html": str(self.html_target(scan_meta, target, rows)),
+            "json": str(self.json_target(td, rows)),
+            "txt": str(self.txt_target(td, rows)),
+            "html": str(self.html_target(scan_meta, td, rows)),
         }
