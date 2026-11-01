@@ -113,6 +113,15 @@ class TestEvidence(unittest.TestCase):
             self.assertEqual(len(files), 1, f"expected 1 deduped file, got {len(files)}")
             self.assertIn("truncated", files[0].read_text())
 
+    def test_derives_prefix_from_store_directory(self):
+        import tempfile
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            custom = Path(d) / "custom_captures"
+            es = EvidenceStore(custom, max_bytes=200)
+            rel = es.save("probe", "response body")
+            self.assertTrue(rel.startswith("custom_captures/"), rel)
+            self.assertTrue((Path(d) / rel).exists())
+
 
 
 class TestTarget(unittest.TestCase):

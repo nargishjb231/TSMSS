@@ -17,7 +17,11 @@ class EvidenceStore:
         # digest -> repo-relative path, so repeats return the identical string
         self._seen: dict[str, str] = {}
         # prefix returned by save(); must mirror the real folder name
-        self._prefix = self.dir.name or "evidence"
+        self._prefix = self.dir.name or self.dir.resolve().name
+
+    def relative_path(self, filename: str) -> str:
+        """Build a path relative to the store's parent using the store's own directory."""
+        return f"{self._prefix}/{filename}" if self._prefix else filename
 
     def _key(self, label: str, body: str) -> str:
         return hashlib.sha1(f"{label}|{body}".encode("utf-8", "replace")).hexdigest()[:16]
@@ -26,7 +30,7 @@ class EvidenceStore:
         """Persist truncated evidence.
 
         Returns a path relative to the store's parent directory, e.g.
-        ``evidence/<label>_<digest>.txt``. The prefix is taken from this
+        ``<store_dir>/<label>_<digest>.txt``. The prefix is taken from this
         store's own directory name so the value stays correct whichever
         directory the caller mounts. Falls back to an inline snippet when
         the file cannot be written.
@@ -44,7 +48,7 @@ class EvidenceStore:
             path.write_text(body, encoding="utf-8", errors="replace")
         except OSError:
             return body[:600]
-        self._seen[slot] = f"{self._prefix}/{path.name}"
+        self._seen[slot] = self.relative_path(path.name)
         return self._seen[slot]
 
     @staticmethod

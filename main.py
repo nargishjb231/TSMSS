@@ -105,7 +105,8 @@ async def run_scan(urls: list[str], note: str = "", auto_reports: bool = False) 
 
     limiter = RateLimiter(config.get("scan.max_requests_per_second", 4.0),
                           config.get("scan.per_host_requests_per_second", 1.5))
-    evidence = EvidenceStore(BASE / "reports" / scan_id / "evidence",
+    reports_base = RUNTIME["reports"].base if RUNTIME.get("reports") is not None else (BASE / "reports")
+    evidence = EvidenceStore(reports_base / scan_id / "evidence",
                              int(config.get("reporting.evidence_max_bytes", 8192)))
     engine = TargetEngine(config, cfgmod.load_rules(), scope,
                           make_http_factory(config, scope, limiter), evidence)
@@ -177,7 +178,7 @@ async def run_scan(urls: list[str], note: str = "", auto_reports: bool = False) 
         for fmt, path in generate_reports(scan_id).items():
             console.print(f"[green]{fmt.upper()} report:[/green] {path}")
     else:
-        console.print(f"[grey62]Reports: {BASE / 'reports'}[/grey62]")
+        console.print(f"[grey62]Reports: {reports_base}[/grey62]")
 
     if config.get("safety.notify_on_complete", True):
         await tap.notify("TSMSS scan finished",
