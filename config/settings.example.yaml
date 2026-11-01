@@ -1,0 +1,39 @@
+scan:
+  concurrency_targets: 3
+  max_requests_per_second: 4.0
+  per_host_requests_per_second: 1.5
+  request_timeout: 20
+  max_retries: 3
+  batch_size: 5
+  delay_between_requests: 0.12
+  target_timeout: 900
+  module_timeout: 120
+scope:
+  authorized: false
+  allow_private_targets: false
+  allow_subdomains: true
+  allow_out_of_scope_redirects: false
+  allowed_domains: []
+  max_targets: 500
+active:
+  xss: true
+  sqli: true
+  ssti: true
+  open_redirect: true
+  path_traversal: true
+  command_injection: true
+  crlf: true
+  xxe: true
+  ldap: true
+  subdomain_takeover: true
+  smuggling: true
+  cache_poisoning: true
+  param_discovery: true
+  max_params_per_target: 25
+safety:
+  max_total_requests_per_target: 900
+  check_battery: true
+  notify_on_complete: true
+infra:
+  enable_nmap: true
+  enable_whois: true

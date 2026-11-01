@@ -9,7 +9,6 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 from rich.prompt import Confirm, IntPrompt, Prompt
@@ -28,7 +27,7 @@ from core.http_client import HttpClient
 from core.logger import setup as setup_logging
 from core.rate_limiter import RateLimiter
 from core.report_manager import ReportManager
-from core.scheduler import BatchState, Scheduler
+from core.scheduler import Scheduler
 from core.scope import ScopeGuard
 from core.validator import load_targets, validate
 from ui import dashboard, menu
@@ -122,9 +121,8 @@ async def run_scan(urls: list[str], note: str = "") -> None:
 
     async def on_done(url: str, result: tuple) -> None:
         _, findings, extra, error, requests = result
-        failed = bool(error) or extra == 0 and not findings
-        # `extra` carries either a grade letter or an error string
-        grade_like = isinstance(extra, str) and extra in list("ABCDEF")
+        # `extra` carries a grade letter on success, an error string on failure
+        grade_like = isinstance(extra, str) and extra in tuple("ABCDEF")
         status = "done" if grade_like else "failed"
         value, _ = score(findings)
         db.set_target_status(scan_id, url, status, error=None if status == "done" else str(extra),
@@ -153,10 +151,12 @@ async def run_scan(urls: list[str], note: str = "") -> None:
 
     rows = [dict(r) for r in db.findings(scan_id)]
     targets = [dict(t) for t in db.targets(scan_id)]
-    overall, grade = score([])
     from core.finding import Finding
-    findings_objs = [Finding(**{k: v for k, v in r.items()
-                               if k in Finding.__dataclass_fields__}) for r in rows]
+    findings_objs = []
+    for r in rows:
+        data = {k: v for k, v in r.items() if k in Finding.__dataclass_fields__}
+        data["target"] = r["target_url"]
+        findings_objs.append(Finding(**data))
     overall, grade = score(findings_objs)
 
     console.print(Panel(

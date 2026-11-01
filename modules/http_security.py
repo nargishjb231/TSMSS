@@ -91,7 +91,7 @@ class HttpSecurityModule(BaseModule):
             else:
                 out.append(self.make(
                     ctx, title="HTTPS not available",
-                    severity=HIGH_CONF and MEDIUM, cwe="CWE-319",
+                    severity=MEDIUM, cwe="CWE-319",
                     description="The HTTPS origin did not complete a successful request.",
                     evidence=f"GET {ctx.target.https_url} -> {secure.status or secure.error}",
                     detection_method="HTTPS probe", confidence=HIGH_CONF,

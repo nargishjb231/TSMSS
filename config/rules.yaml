@@ -1,0 +1,2 @@
+# Header rule overrides. Empty = use built-in defaults.
+headers: {}

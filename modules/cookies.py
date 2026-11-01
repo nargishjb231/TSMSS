@@ -18,14 +18,9 @@ class CookieModule(BaseModule):
         if resp is None:
             resp = await ctx.http.request("GET", ctx.target.url)
         out = []
-        for raw in resp.get_all("set-cookie") + self._multi(resp):
+        for raw in resp.set_cookies:
             out += self._review(ctx, raw, resp)
         return out
-
-    @staticmethod
-    def _multi(resp) -> list[str]:
-        val = resp.header("set-cookie")
-        return [] if not val else [val]
 
     def _review(self, ctx, raw: str, resp):
         parts = [p.strip() for p in raw.split(";")]

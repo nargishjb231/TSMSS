@@ -33,7 +33,7 @@ def _v():
 @check("scope blocks private IPs by default")
 def _s():
     from core.scope import ScopeGuard
-    g = ScopeGuard(["localhost"], allow_private=False)
+    g = ScopeGuard(["127.0.0.1"], allow_private=False)
     assert not g.check_target("http://127.0.0.1/").allowed
     g2 = ScopeGuard([], allow_private=True)
     assert g2.check_target("http://127.0.0.1/").allowed

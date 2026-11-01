@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import time
 import traceback
-from urllib.parse import urlsplit
 
 from config import SEVERITY_WEIGHTS
 from core.context import ScanContext, Target

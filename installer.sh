@@ -48,11 +48,13 @@ for p in curl git jq openssl whois dnsutils nmap termux-api python-cryptography;
 done
 
 hdr "5. Python packages"
+declare -A IMPORTS=([beautifulsoup4]=bs4 [PyYAML]=yaml [dnspython]=dns [httpx]=httpx [rich]=rich)
 python -m pip install --upgrade pip >/dev/null 2>&1
 while IFS= read -r line; do
   [ -z "$line" ] && continue; case "$line" in \#*) continue ;; esac
   pkgname="${line%%[<>=]*}"
-  python -c "import ${pkgname//-/_}" 2>/dev/null && { ok "$pkgname present"; continue; }
+  mod="${IMPORTS[$pkgname]:-${pkgname//-/_}}"
+  python -c "import $mod" 2>/dev/null && { ok "$pkgname present"; continue; }
   printf '  installing %s ... ' "$pkgname"
   python -m pip install --no-cache-dir "$line" >/dev/null 2>&1 \
     && printf '%sdone%s\n' "$G" "$N" \
@@ -66,7 +68,15 @@ for d in config core modules ui templates reports reports/html reports/json \
 done
 
 hdr "7. Config bootstrap"
-[ -f config/settings.yaml ] || cp config/settings.example.yaml config/settings.yaml 2>/dev/null && ok "settings.yaml"
+if [ ! -f config/settings.yaml ]; then
+  if cp config/settings.example.yaml config/settings.yaml 2>/dev/null; then
+    ok "settings.yaml created"
+  else
+    warn "settings.example.yaml missing — defaults will be used"
+  fi
+else
+  ok "settings.yaml exists (kept)"
+fi
 [ -f targets.txt ] || { printf '# one authorized URL per line\nhttps://example.com\n' > targets.txt; ok "targets.txt"; }
 
 hdr "8. Termux:API"
@@ -77,6 +87,7 @@ else
 fi
 
 hdr "9. Self-test"
+[ -d modules ] || { err "modules/ missing at repo root"; FAILED=$((FAILED+1)); }
 python -m compileall -q core modules ui main.py config.py >/dev/null 2>&1 \
   && ok "All sources compile" || { err "Compile errors"; FAILED=$((FAILED+1)); }
 python tests/selftest.py && ok "Self-test passed" || { err "Self-test failed"; FAILED=$((FAILED+1)); }

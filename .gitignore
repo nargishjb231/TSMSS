@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# TSMSS runtime
+database/*.db
+database/*.db-*
+logs/*.log
+reports/
+config/settings.yaml

@@ -21,7 +21,10 @@ def normalize(raw: str) -> str:
     s = (raw or "").strip()
     if not s or s.startswith("#"):
         return ""
-    s = s.split()[0]
+    if "#" in s:
+        s = s.split("#", 1)[0].strip()
+        if not s:
+            return ""
     if not re.match(r"^[a-z][a-z0-9+.-]*://", s, re.I):
         s = "https://" + s.lstrip("/")
     parts = urlsplit(s)

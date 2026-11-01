@@ -31,6 +31,7 @@ class Fetched:
     hops: list[Hop] = field(default_factory=list)
     final_url: str = ""
     truncated: bool = False
+    set_cookies: list[str] = field(default_factory=list)
     error: str | None = None
 
     @property
@@ -111,7 +112,8 @@ class HttpClient:
                 body = await self._read_body(resp)
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 fetched = Fetched(url, resp.status_code, headers, body, elapsed,
-                                  final_url=str(resp.url))
+                                  final_url=str(resp.url),
+                                  set_cookies=resp.headers.get_list("set-cookie"))
                 if resp.status_code in _TRANSIENT_STATUS and attempt < attempts:
                     await self._honour_retry_after(resp, attempt, host)
                     last = fetched
@@ -181,6 +183,7 @@ class HttpClient:
                 fetched.final_url = str(resp.url)
                 headers = {k.lower(): v for k, v in resp.headers.items()}
                 fetched.headers = headers
+                fetched.set_cookies = resp.headers.get_list("set-cookie")
                 fetched.body = await self._read_body(resp)
             except (httpx.HTTPError, StopRequested) as exc:
                 fetched.hops = hops

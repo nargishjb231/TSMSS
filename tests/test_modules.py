@@ -95,7 +95,8 @@ def make_ctx(url, config):
                     status, hdrs = rr.status_code, dict(rr.headers)
                     r = rr
             return Fetched(u, r.status_code, {k.lower(): v for k, v in r.headers.items()},
-                           r.text, 1.0, hops=hops, final_url=str(r.url))
+                           r.text, 1.0, hops=hops, final_url=str(r.url),
+                           set_cookies=r.headers.get_list("set-cookie"))
 
         async def aclose(self):
             await self.c.aclose()
@@ -116,7 +117,6 @@ class TestFixture(unittest.IsolatedAsyncioTestCase):
             out = await http_security.HttpSecurityModule({}).run(ctx)
             titles = " ".join(f.title for f in out)
             self.assertIn("Content-Security-Policy", titles)
-            self.assertIn("X-Frame-Options", titles) if False else None
             self.assertIn("clickjacking", titles.lower())
             await ctx.http.aclose()
 
