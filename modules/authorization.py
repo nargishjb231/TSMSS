@@ -19,7 +19,8 @@ class AuthorizationModule(BaseModule):
         out = []
         out += await self._idor_surface(ctx)
         out += self._role_exposure(ctx)
-        out += await self._method_override(ctx)
+        if not ctx.config.get("active.safe_mode", False):
+            out += await self._method_override(ctx)
         return out
 
     async def _idor_surface(self, ctx):
@@ -31,6 +32,23 @@ class AuthorizationModule(BaseModule):
         numeric = [(k, v[0]) for k, v in params.items() if ID_PARAM.match(k) and v[0].isdigit()]
         if not numeric:
             return []
+        if ctx.config.get("active.safe_mode", False):
+            return [
+                self.make(
+                    ctx,
+                    title=f"Sequential object identifier parameter '{key}' (BOLA/IDOR review required)",
+                    severity=INFO,
+                    cwe="CWE-639",
+                    description="URL contains a sequential numeric object identifier. Do not probe other users' records; verify object-level authorization using two owned test accounts.",
+                    evidence=f"Parameter {key}={value} on {url}",
+                    detection_method="Passive parameter structure check",
+                    confidence=NEEDS_MANUAL,
+                    remediation="Enforce server-side ownership checks on every object lookup and prefer non-sequential UUIDs.",
+                    parameter=key,
+                    tags=["authorization", "idor", "API1:2023"],
+                )
+                for key, value in numeric[:3]
+            ]
         out = []
         for key, value in numeric[:3]:
             mutated = dict(params)

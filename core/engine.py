@@ -27,15 +27,24 @@ class TargetScanResult:
     elapsed_s: int = 0
 
 MODULE_ORDER = [
-    "dns_security", "ssl_tls", "http_security", "cookies", "cors",
+    "dns_security", "ssl_tls", "http_security", "reconnaissance", "cookies", "cors",
     "information_disclosure", "framework_audit", "api_security",
     "authentication", "authorization", "dependency_audit",
-    "vulnerability_indicators", "infrastructure", "external_tools",
+    "vulnerability_indicators", "source_code", "infrastructure", "external_tools",
 ]
 
 
-_CONF_ORDER = {"CONFIRMED": 0, "HIGH CONFIDENCE": 1, "MEDIUM CONFIDENCE": 2,
-               "LOW CONFIDENCE": 3, "NEEDS MANUAL VERIFICATION": 4, "HEURISTIC": 4, "MANUAL": 4}
+_CONF_ORDER = {
+    "CONFIRMED": 0,
+    "STRONG EVIDENCE": 1,
+    "HIGH CONFIDENCE": 1,
+    "POTENTIAL": 2,
+    "MEDIUM CONFIDENCE": 2,
+    "LOW CONFIDENCE": 3,
+    "NEEDS MANUAL VERIFICATION": 4,
+    "HEURISTIC": 4,
+    "MANUAL": 4,
+}
 
 
 def _dedupe(findings: list, min_conf: str = "") -> list:
@@ -56,12 +65,13 @@ def _dedupe(findings: list, min_conf: str = "") -> list:
 def build_modules(rules: dict, disabled=None) -> list:
     from modules import (api_security, authentication, authorization, cookies, cors,
                          dependency_audit, dns_security, framework_audit, http_security,
-                         external_tools, information_disclosure, infrastructure, ssl_tls,
-                         vulnerability_indicators)
+                         external_tools, information_disclosure, infrastructure,
+                         reconnaissance, source_code, ssl_tls, vulnerability_indicators)
     registry = {
         "dns_security": dns_security.DnsSecurityModule,
         "ssl_tls": ssl_tls.SslTlsModule,
         "http_security": lambda: http_security.HttpSecurityModule(rules),
+        "reconnaissance": reconnaissance.ReconnaissanceModule,
         "cookies": cookies.CookieModule,
         "cors": cors.CorsModule,
         "information_disclosure": information_disclosure.InformationDisclosureModule,
@@ -71,6 +81,7 @@ def build_modules(rules: dict, disabled=None) -> list:
         "authorization": authorization.AuthorizationModule,
         "dependency_audit": dependency_audit.DependencyAuditModule,
         "vulnerability_indicators": vulnerability_indicators.VulnerabilityIndicatorModule,
+        "source_code": source_code.SourceCodeModule,
         "infrastructure": infrastructure.InfrastructureModule,
         "external_tools": external_tools.ExternalToolsModule,
     }
