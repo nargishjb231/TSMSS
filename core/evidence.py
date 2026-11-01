@@ -6,7 +6,21 @@ import re
 from pathlib import Path
 
 _SECRET_HINTS = re.compile(
-    r"(?i)(api[_-]?key|secret|token|password|passwd|authorization|bearer)\s*[:=]\s*[\"']?([A-Za-z0-9_\-\.]{8,})")
+    r"(?i)(api[_-]?key|aws[_-]?key|secret|token|password|passwd|authorization|bearer)\s*([:=\s])\s*([\"']?)([A-Za-z0-9_\-\.]{8,})"
+)
+_TOKEN_LITERALS = re.compile(
+    r"\b(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36,})\b"
+)
+_PRIV_KEY_BLOCK = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
+)
+
+
+def redact_sensitive(body: str) -> str:
+    text = body or ""
+    text = _PRIV_KEY_BLOCK.sub("-----BEGIN PRIVATE KEY-----[REDACTED]-----END PRIVATE KEY-----", text)
+    text = _TOKEN_LITERALS.sub(lambda m: f"{m.group(1)[:6]}***[REDACTED]", text)
+    return _SECRET_HINTS.sub(lambda m: f"{m.group(1)}={m.group(4)[:6]}***", text)
 
 
 class EvidenceStore:
@@ -63,4 +77,4 @@ class EvidenceStore:
 
     @staticmethod
     def redact(body: str) -> str:
-        return _SECRET_HINTS.sub(lambda m: f"{m.group(1)}={m.group(2)[:6]}***", body or "")
+        return redact_sensitive(body)

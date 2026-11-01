@@ -1,16 +1,19 @@
-"""Finding model with mandatory evidence and confidence semantics."""
+"""Finding model with mandatory evidence, 4-tier verification, OWASP mapping, and baseline fingerprinting."""
 from __future__ import annotations
 
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
+import hashlib
 import itertools
 import threading
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
 from typing import Any
 
 from config import SEVERITY_ORDER
 
 CRITICAL, HIGH, MEDIUM, LOW, INFO = "CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"
 CONFIRMED = "CONFIRMED"
+STRONG_EVIDENCE = "STRONG EVIDENCE"
+POTENTIAL = "POTENTIAL"
 HIGH_CONF = "HIGH CONFIDENCE"
 MED_CONF = "MEDIUM CONFIDENCE"
 LOW_CONF = "LOW CONFIDENCE"
@@ -18,12 +21,23 @@ NEEDS_MANUAL = "NEEDS MANUAL VERIFICATION"
 HEURISTIC = "HEURISTIC"
 MANUAL = "MANUAL REVIEW"
 
-_CONF_RANK = {CONFIRMED: 5, HIGH_CONF: 4, MED_CONF: 3, LOW_CONF: 2,
-             NEEDS_MANUAL: 1, HEURISTIC: 1, MANUAL: 1}
+_CONF_RANK = {
+    CONFIRMED: 5,
+    STRONG_EVIDENCE: 4,
+    HIGH_CONF: 4,
+    POTENTIAL: 3,
+    MED_CONF: 3,
+    LOW_CONF: 2,
+    NEEDS_MANUAL: 1,
+    HEURISTIC: 1,
+    MANUAL: 1,
+}
 
 # Checks that may only ever be CONFIRMED because they assert a positive fact.
-_POSITIVE_ONLY = {"missing_header", "cookie_flag", "tls_version", "dns_record",
-                  "cors_origin", "clickjacking", "certificate"}
+_POSITIVE_ONLY = {
+    "missing_header", "cookie_flag", "tls_version", "dns_record",
+    "cors_origin", "clickjacking", "certificate",
+}
 
 
 class _Seq:
@@ -59,28 +73,97 @@ class Finding:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds"))
     verification_status: str = "UNVERIFIED"
     tags: list[str] = field(default_factory=list)
+    endpoint: str = ""
+    owasp_reference: str = ""
+    wstg_reference: str = ""
+    impact: str = ""
+    false_positive_notes: str = ""
+    test_id: str = ""
 
     def __post_init__(self) -> None:
+        if not self.finding_id:
+            self.finding_id = f"TSMSS-{_SEQ.next():05d}"
+        self.severity = self.severity.upper()
         if self.severity not in SEVERITY_ORDER:
             self.severity = INFO
         if self.confidence not in _CONF_RANK:
             self.confidence = NEEDS_MANUAL
-        if not self.finding_id:
-            self.finding_id = f"TSMSS-{_SEQ.next():04d}"
+        if not self.evidence:
+            self.evidence = "(no raw snippet captured)"
         if not self.url:
             self.url = self.target
-        if not self.verification_status or self.verification_status == "UNVERIFIED":
-            self.verification_status = ("AUTO-VERIFIED" if self.confidence == CONFIRMED
-                                        else "MANUAL-REVIEW-REQUIRED")
+        from core.verification import enrich_finding
+        enrich_finding(self)
 
     def downgrade_if_heuristic(self, kind: str) -> "Finding":
         """Prevent CONFIRMED on classes that only support inference."""
         if kind not in _POSITIVE_ONLY and self.confidence == CONFIRMED:
             self.confidence = HIGH_CONF
+            if self.verification_status == CONFIRMED:
+                self.verification_status = STRONG_EVIDENCE
         return self
 
+    def evidence_digest(self) -> str:
+        raw = (self.evidence or "").encode("utf-8", "replace")
+        return hashlib.sha256(raw).hexdigest()[:16]
+
+    def check_key(self) -> str:
+        return f"{self.title}|{self.parameter}" if self.parameter else self.title
+
+    def fingerprint(self) -> tuple[str, str, str, str]:
+        """Exact 4-tuple fingerprint: (module, target, check, evidence_digest)."""
+        return (
+            self.module or self.category,
+            self.target,
+            self.check_key(),
+            self.evidence_digest(),
+        )
+
+    def fingerprint_dict(self) -> dict[str, str]:
+        mod, tgt, chk, dig = self.fingerprint()
+        return {
+            "module": mod,
+            "target": tgt,
+            "check": chk,
+            "evidence_digest": dig,
+        }
+
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # Include uppercase aliases required by Section 15 AI-Readable Report schema
+        d["OWASP_reference"] = self.owasp_reference
+        d["WSTG_reference"] = self.wstg_reference
+        d["CWE"] = self.cwe
+        d["CVE"] = self.cve
+        return d
+
+    def to_ai_dict(self) -> dict[str, Any]:
+        """Return exact Section 15 AI-readable finding structure."""
+        return {
+            "finding_id": self.finding_id,
+            "target": self.target,
+            "endpoint": self.endpoint or self.url or self.target,
+            "category": self.category,
+            "title": self.title,
+            "description": self.description,
+            "severity": self.severity,
+            "confidence": self.confidence,
+            "verification_status": self.verification_status,
+            "evidence": self.evidence,
+            "detection_method": self.detection_method,
+            "OWASP_reference": self.owasp_reference,
+            "WSTG_reference": self.wstg_reference,
+            "CWE": self.cwe,
+            "CVE": self.cve,
+            "impact": self.impact,
+            "remediation": self.remediation,
+            "false_positive_notes": self.false_positive_notes,
+            "timestamp": self.timestamp,
+            "module": self.module,
+            "parameter": self.parameter,
+            "test_id": self.test_id,
+            "tags": list(self.tags),
+        }
 
     @property
     def weight(self) -> int:
@@ -107,6 +190,8 @@ def score_counts(counts: dict[str, int]) -> tuple[int, str]:
         for sev, n in counts.items() if sev in _DEDUCTION_CAP and n
     )
     value = max(0, min(100, round(100 - deduction)))
-    grade = ("A" if value >= 90 else "B" if value >= 80 else "C" if value >= 65
-             else "D" if value >= 50 else "E" if value >= 30 else "F")
+    grade = (
+        "A" if value >= 90 else "B" if value >= 80 else "C" if value >= 65
+        else "D" if value >= 50 else "E" if value >= 30 else "F"
+    )
     return value, grade
