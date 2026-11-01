@@ -1,0 +1,215 @@
+"""AI-Readable Report System (Section 15).
+
+Validates JSON reports against schemas/tsmss-report-v2.schema.json, redacts
+sensitive token/secret values, chunks large finding lists for context-window
+limits, and writes a self-contained Manual AI Upload Package for Gemini,
+ChatGPT, or Claude. Never auto-uploads private scan data externally.
+"""
+from __future__ import annotations
+
+import copy
+import json
+from pathlib import Path
+from typing import Any
+
+from core.evidence import redact_sensitive
+
+REQUIRED_TOP_KEYS = (
+    "report_id",
+    "scanner_version",
+    "report_timestamp",
+    "target_inventory",
+    "scan_scope",
+    "methodology",
+    "standards_versions",
+    "limitations",
+    "findings",
+)
+
+REQUIRED_FINDING_KEYS = (
+    "finding_id",
+    "target",
+    "endpoint",
+    "category",
+    "title",
+    "description",
+    "severity",
+    "confidence",
+    "verification_status",
+    "evidence",
+    "detection_method",
+    "OWASP_reference",
+    "WSTG_reference",
+    "CWE",
+    "CVE",
+    "impact",
+    "remediation",
+    "false_positive_notes",
+    "timestamp",
+)
+
+VALID_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"}
+VALID_VERIFICATION_STATES = {
+    "CONFIRMED",
+    "STRONG EVIDENCE",
+    "POTENTIAL",
+    "NEEDS MANUAL VERIFICATION",
+}
+
+
+def validate_ai_report(payload: dict[str, Any], schema_path: Path | None = None) -> list[str]:
+    """Validate an AI-readable report dict against the TSMSS v2.0 JSON schema."""
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return ["Report payload must be a JSON object"]
+
+    if schema_path and Path(schema_path).exists():
+        try:
+            schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
+            req_top = schema.get("required", REQUIRED_TOP_KEYS)
+        except Exception:
+            req_top = REQUIRED_TOP_KEYS
+    else:
+        req_top = REQUIRED_TOP_KEYS
+
+    for k in req_top:
+        if k not in payload:
+            errors.append(f"Missing required top-level key: '{k}'")
+
+    if "target_inventory" in payload and not isinstance(payload["target_inventory"], list):
+        errors.append("'target_inventory' must be a list")
+    if "limitations" in payload and not isinstance(payload["limitations"], list):
+        errors.append("'limitations' must be a list")
+
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        errors.append("'findings' must be a list")
+        return errors
+
+    for idx, f in enumerate(findings):
+        if not isinstance(f, dict):
+            errors.append(f"findings[{idx}] must be an object")
+            continue
+        for fk in REQUIRED_FINDING_KEYS:
+            if fk not in f:
+                errors.append(f"findings[{idx}] missing required key '{fk}'")
+        sev = f.get("severity")
+        if sev not in VALID_SEVERITIES:
+            errors.append(f"findings[{idx}].severity invalid: {sev!r}")
+        vstat = f.get("verification_status")
+        if vstat not in VALID_VERIFICATION_STATES:
+            errors.append(f"findings[{idx}].verification_status invalid: {vstat!r}")
+    return errors
+
+
+def redact_report_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Return a deep copy of payload with sensitive values in evidence redacted."""
+    clean = copy.deepcopy(payload)
+    for f in clean.get("findings", []):
+        if isinstance(f, dict) and "evidence" in f:
+            f["evidence"] = redact_sensitive(str(f["evidence"] or ""))
+    for f in clean.get("flat_findings", []):
+        if isinstance(f, dict) and "evidence" in f:
+            f["evidence"] = redact_sensitive(str(f["evidence"] or ""))
+    by_target = clean.get("findings_by_target")
+    if isinstance(by_target, dict):
+        for t_list in by_target.values():
+            if isinstance(t_list, list):
+                for f in t_list:
+                    if isinstance(f, dict) and "evidence" in f:
+                        f["evidence"] = redact_sensitive(str(f["evidence"] or ""))
+    return clean
+
+
+def _build_prompt_markdown(payload: dict[str, Any], chunk_count: int) -> str:
+    rep_id = payload.get("report_id", "unknown")
+    targets = [t.get("url", "") for t in payload.get("target_inventory", []) if isinstance(t, dict)]
+    findings = payload.get("findings", [])
+    return f"""# TSMSS 2.0 — AI Security Triage & Bug Bounty Analysis Prompt
+
+> **Privacy & Safety Notice**: This package was generated locally by TSMSS 2.0 Ultimate Edition.
+> Sensitive tokens/credentials in evidence snippets have been automatically redacted.
+> Upload `ai_report_validated.json` (or individual files in `chunks/` if the report is large)
+> manually to Gemini, ChatGPT, or Claude along with the prompt below.
+
+---
+
+## Copy-Paste Prompt for Gemini / ChatGPT / Claude
+
+```markdown
+You are a Senior Application Security Engineer and Bug Bounty Triage Specialist.
+I am providing a structured, schema-validated JSON security assessment report (`report_id: {rep_id}`)
+generated by TSMSS 2.0 Ultimate Edition across {len(targets)} authorized target(s) ({len(findings)} total findings, split into {chunk_count} chunk(s)).
+
+Please analyze the attached report and provide:
+1. **Confirmed & Strong-Evidence Prioritization**:
+   - Rank findings where `verification_status` is `CONFIRMED` or `STRONG EVIDENCE` by real-world exploitability and business impact.
+   - Group related configuration findings (e.g., missing security headers or cookie flags) into consolidated remediation actions.
+2. **False-Positive & Manual Verification Triage**:
+   - Review every finding marked `POTENTIAL` or `NEEDS MANUAL VERIFICATION` alongside its `evidence` and `false_positive_notes`.
+   - Provide safe, non-destructive manual verification steps (e.g., curl commands or browser DevTools checks) for each candidate.
+3. **OWASP & CWE Remediation Roadmap**:
+   - Provide concrete code or server configuration fixes (Nginx/Apache/Cloudflare/Django/Laravel/Node/Express) mapped to the cited `OWASP_reference`, `WSTG_reference`, and `CWE`.
+4. **Executive Risk Summary**:
+   - Summarize the overall security posture, key strengths, and scan limitations accurately without exaggerating severity.
+```
+"""
+
+
+def build_ai_upload_package(
+    report_payload: dict[str, Any],
+    output_dir: Path | str,
+    chunk_size: int = 25,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Create a manual AI upload package directory with validated JSON, JSONL, chunks, and prompt."""
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    chunks_dir = out_dir / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+
+    redacted = redact_report_payload(report_payload)
+    validation_errors = validate_ai_report(redacted, schema_path=schema_path)
+
+    # 1. Validated JSON
+    json_path = out_dir / "ai_report_validated.json"
+    json_path.write_text(json.dumps(redacted, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # 2. JSONL stream (one finding per line with report_id context)
+    jsonl_path = out_dir / "ai_findings.jsonl"
+    findings = redacted.get("findings", [])
+    with jsonl_path.open("w", encoding="utf-8") as fh:
+        for f in findings:
+            row = dict(f)
+            row["report_id"] = redacted.get("report_id", "")
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    # 3. Chunking for LLM context windows
+    chunk_size = max(1, int(chunk_size))
+    chunk_files: list[Path] = []
+    slices = [findings[i: i + chunk_size] for i in range(0, max(1, len(findings)), chunk_size)]
+    for idx, sl in enumerate(slices, 1):
+        cpath = chunks_dir / f"chunk_{idx:03d}.json"
+        chunk_obj = {
+            "report_id": redacted.get("report_id"),
+            "scanner_version": redacted.get("scanner_version"),
+            "chunk_index": idx,
+            "total_chunks": len(slices),
+            "standards_versions": redacted.get("standards_versions"),
+            "findings": sl,
+        }
+        cpath.write_text(json.dumps(chunk_obj, indent=2, ensure_ascii=False), encoding="utf-8")
+        chunk_files.append(cpath)
+
+    # 4. AI Analysis Prompt Markdown
+    prompt_path = out_dir / "AI_ANALYSIS_PROMPT.md"
+    prompt_path.write_text(_build_prompt_markdown(redacted, len(chunk_files)), encoding="utf-8")
+
+    return {
+        "package_dir": out_dir,
+        "json": json_path,
+        "jsonl": jsonl_path,
+        "prompt": prompt_path,
+        "chunks": chunk_files,
+        "validation_errors": validation_errors,
+    }

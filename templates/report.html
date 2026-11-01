@@ -3,104 +3,299 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TSMSS Security Report $scan_id</title>
+<title>TSMSS 2.0 Security Report — $scan_id</title>
 <style>
 :root{
-  --bg:#0d1117;--panel:#161b22;--panel2:#1c2330;--line:#30363d;--fg:#e6edf3;
-  --dim:#8b949e;--crit:#f85149;--high:#ff8c42;--med:#e3b341;--low:#58a6ff;
-  --info:#8b949e;--ok:#3fb950;--accent:#1f6feb;
+  --bg:#071120;--panel:#0d1b30;--panel2:#132642;--line:#1e3a5f;--fg:#e6f1ff;
+  --dim:#8892b0;--crit:#ff4d5a;--high:#ff8c42;--med:#f6c945;--low:#00e5ff;
+  --info:#8892b0;--ok:#2ee59d;--accent:#00e5ff;--manual:#f6c945;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
-  font:15px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;
-  padding:16px;max-width:1100px;margin:0 auto}
+  font:14px/1.6 -apple-system,"Segoe UI",Roboto,sans-serif;
+  padding:16px;max-width:1240px;margin:0 auto}
 h1,h2,h3,h4{margin:0 0 .5em;line-height:1.25}
-h1{font-size:1.6rem;border-bottom:2px solid var(--accent);padding-bottom:.4em}
-h2{font-size:1.15rem;margin-top:2em;color:var(--accent);text-transform:uppercase;
-  letter-spacing:.06em;font-size:.85rem}
-h3{font-size:1.05rem;display:flex;justify-content:space-between;gap:12px;
+h1{font-size:1.55rem;border-bottom:2px solid var(--accent);padding-bottom:.45em;
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+h2{margin-top:1.9em;color:var(--accent);text-transform:uppercase;
+  letter-spacing:.07em;font-size:.86rem}
+h3{font-size:1.02rem;display:flex;justify-content:space-between;gap:12px;
   align-items:baseline;flex-wrap:wrap;border-left:3px solid var(--accent);padding-left:10px}
 .meta{color:var(--dim);font-size:.82rem;margin:.2em 0 1em}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;
-  padding:14px;margin:12px 0}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
-.kpi{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:12px}
-.kpi .v{font-size:1.5rem;font-weight:700}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:14px;margin:12px 0;box-shadow:0 4px 16px rgba(0,0,0,.28)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}
+.kpi{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px}
+.kpi .v{font-size:1.45rem;font-weight:700;color:#fff}
 .kpi .l{color:var(--dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.08em}
-.grade{font-weight:700;padding:2px 10px;border-radius:999px;font-size:.9rem}
-.g-a{background:#0f3d1f;color:var(--ok)}.g-b{background:#173a1f;color:#7ee787}
-.g-c{background:#3d3410;color:var(--med)}.g-d{background:#3d2a10;color:var(--high)}
-.g-e,.g-f{background:#3d1414;color:var(--crit)}
-table{width:100%;border-collapse:collapse;font-size:.86rem}
-th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--line)}
-th{color:var(--dim);font-size:.72rem;text-transform:uppercase;letter-spacing:.07em}
+.grade{font-weight:700;padding:2px 11px;border-radius:999px;font-size:.88rem}
+.g-a{background:#093824;color:var(--ok);border:1px solid var(--ok)}
+.g-b{background:#123b22;color:#7ee787;border:1px solid #7ee787}
+.g-c{background:#3d3410;color:var(--med);border:1px solid var(--med)}
+.g-d{background:#3d2510;color:var(--high);border:1px solid var(--high)}
+.g-e,.g-f{background:#3d1218;color:var(--crit);border:1px solid var(--crit)}
+.table-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.84rem}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--accent);font-size:.73rem;text-transform:uppercase;letter-spacing:.07em;
+  background:var(--panel2)}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:#fff;background:#1a3459}
+th.sortable::after{content:" \2195";opacity:.55;font-size:.7rem}
+th.sort-asc::after{content:" \2191";opacity:1}
+th.sort-desc::after{content:" \2193";opacity:1}
 .st{font-weight:600}.st-done{color:var(--ok)}.st-failed{color:var(--crit)}
-.sev{font-weight:700;font-size:.7rem;padding:2px 7px;border-radius:4px;
-  text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
-.sev-critical{background:var(--crit);color:#fff}.sev-high{background:var(--high);color:#111}
-.sev-medium{background:var(--med);color:#111}.sev-low{background:var(--low);color:#111}
-.sev-info{background:var(--info);color:#111}
+.sev,.chip{display:inline-block;font-weight:700;font-size:.68rem;padding:2px 8px;
+  border-radius:999px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+.sev-critical{background:var(--crit);color:#fff}
+.sev-high{background:var(--high);color:#111}
+.sev-medium{background:var(--med);color:#111}
+.sev-low{background:var(--low);color:#061224}
+.sev-info{background:#233554;color:var(--fg)}
+.chip-confirmed{background:#093824;color:var(--ok);border:1px solid var(--ok)}
+.chip-strong{background:#0c2d48;color:var(--low);border:1px solid var(--low)}
+.chip-potential{background:#3a2e0e;color:var(--med);border:1px solid var(--med)}
+.chip-manual{background:#3b1f14;color:#ffb482;border:1px solid var(--high)}
+
+/* Sticky Filter Bar & Target Tabs */
+.sticky-bar{position:sticky;top:0;z-index:50;background:rgba(7,17,32,.96);
+  backdrop-filter:blur(8px);border:1px solid var(--accent);border-radius:10px;
+  padding:10px 12px;margin:14px 0;box-shadow:0 6px 20px rgba(0,0,0,.45)}
+.filter-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.search-input,.conf-select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+  border-radius:6px;padding:6px 10px;font-size:.82rem}
+.search-input{flex:1;min-width:180px}
+.filter-chips,.target-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.fbtn,.tab-btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+  border-radius:999px;padding:4px 11px;font-size:.74rem;cursor:pointer;font-weight:600}
+.fbtn:hover,.tab-btn:hover{border-color:var(--accent);color:#fff}
+.fbtn.active,.tab-btn.active{background:var(--accent);color:#061224;border-color:var(--accent)}
+
+/* Cards & Separated Manual Verification Section */
 .card{background:var(--panel);border:1px solid var(--line);border-left-width:4px;
-  border-radius:8px;padding:14px;margin:12px 0}
+  border-radius:8px;padding:13px;margin:10px 0}
 .sev-border-critical{border-left-color:var(--crit)}
 .sev-border-high{border-left-color:var(--high)}
 .sev-border-medium{border-left-color:var(--med)}
 .sev-border-low{border-left-color:var(--low)}
 .sev-border-info{border-left-color:var(--info)}
-.card header{display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px}
-.card h4{font-size:.98rem;margin:0}
+.card header{display:flex;gap:8px;align-items: center;flex-wrap:wrap;margin-bottom:6px}
+.card h4{font-size:.95rem;margin:0;flex:1}
 .fid{color:var(--dim);font-size:.72rem;font-family:ui-monospace,monospace}
-dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:.8rem;margin:.4em 0}
+dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:.79rem;margin:.4em 0}
 dt{color:var(--dim)}dd{margin:0}
-pre{background:#0a0d12;border:1px solid var(--line);border-radius:6px;padding:10px;
-  overflow-x:auto;font-size:.76rem;white-space:pre-wrap;word-break:break-word;
-  max-height:340px}
-code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.82rem}
-details{margin:.6em 0}summary{cursor:pointer;color:var(--accent);font-size:.82rem}
-.desc{margin:.5em 0}.fix{font-size:.85rem;border-top:1px dashed var(--line);
-  padding-top:.6em;color:#a5d6ff}
+pre{background:#040b14;border:1px solid var(--line);border-radius:6px;padding:9px;
+  overflow-x:auto;font-size:.75rem;white-space:pre-wrap;word-break:break-word;max-height:300px}
+code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:.8rem;color:var(--accent)}
+details{margin:.45em 0}summary{cursor:pointer;color:var(--accent);font-size:.8rem}
+.desc{margin:.45em 0}.fix{font-size:.83rem;border-top:1px dashed var(--line);
+  padding-top:.55em;color:#80ffdb}
+.manual-section{background:#121b28;border:2px dashed var(--manual);border-radius:10px;
+  padding:14px;margin-top:22px}
+.manual-header{color:var(--manual);font-weight:700;font-size:.92rem;
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;
+  margin-bottom:8px}
+.manual-note{color:var(--dim);font-size:.8rem;margin:0 0 10px}
 .clean{color:var(--ok);font-size:.86rem}
-ul.lim{color:var(--dim);font-size:.84rem;padding-left:1.2em}
+ul.lim{color:var(--dim);font-size:.82rem;padding-left:1.2em}
 footer{margin-top:2.5em;padding-top:1em;border-top:1px solid var(--line);
   color:var(--dim);font-size:.76rem}
+@media (max-width:640px){
+  body{padding:10px}
+  h1{font-size:1.25rem}
+  th,td{padding:6px 7px;font-size:.78rem}
+}
 </style>
 </head>
 <body>
-<h1>TSMSS Security Assessment</h1>
-<p class="meta">Scan <code>$scan_id</code> &middot; generated $generated &middot; $note</p>
+<h1>
+  <span>TSMSS 2.0 Ultimate Edition — Security Report</span>
+  <span class="grade $grade_class">Grade $grade ($score/100)</span>
+</h1>
+<p class="meta">Scan ID: <code>$scan_id</code> &middot; Generated: $generated &middot; Note: $note</p>
 
-<h2>Executive summary</h2>
+<h2>Executive Summary</h2>
 <div class="panel"><p>$executive_summary</p></div>
 
 <div class="kpis">
-  <div class="kpi"><div class="v"><span class="grade $grade_class">$grade</span></div>
-    <div class="l">Grade</div></div>
+  <div class="kpi"><div class="v"><span class="grade $grade_class">$grade</span></div><div class="l">Overall Grade</div></div>
   <div class="kpi"><div class="v">$score</div><div class="l">Score / 100</div></div>
-  <div class="kpi"><div class="v">$total_findings</div><div class="l">Findings</div></div>
-  <div class="kpi"><div class="v">$target_count</div><div class="l">Targets</div></div>
+  <div class="kpi"><div class="v">$total_findings</div><div class="l">Total Findings</div></div>
+  <div class="kpi"><div class="v">$confirmed_count</div><div class="l">Confirmed / Strong</div></div>
+  <div class="kpi"><div class="v">$manual_count</div><div class="l">Needs Manual Review</div></div>
+  <div class="kpi"><div class="v">$target_count</div><div class="l">Authorized Targets</div></div>
 </div>
 
-<h2>Severity distribution</h2>
-<div class="panel"><table><tbody>$severity_rows</tbody></table></div>
+<h2>Severity Distribution</h2>
+<div class="panel"><div class="table-wrap"><table><tbody>$severity_rows</tbody></table></div></div>
 
-<h2>Target inventory</h2>
-<div class="panel"><table>
+<h2>Target Inventory</h2>
+<div class="panel"><div class="table-wrap"><table>
 <thead><tr><th>Target</th><th>Status</th><th>Score</th><th>Findings</th></tr></thead>
-<tbody>$target_rows</tbody></table></div>
+<tbody>$target_rows</tbody></table></div></div>
 
-<h2>Detailed findings</h2>
-$sections
+<!-- Sticky Interactive Filter & Target Tab Bar -->
+<div class="sticky-bar" id="sticky-controls">
+  <div class="filter-row">
+    <input type="search" id="filter-search" class="search-input" placeholder="Search findings by title, CWE, OWASP, parameter, or evidence..." oninput="applyFilters()">
+    <select id="filter-conf" class="conf-select" onchange="applyFilters()">
+      <option value="ALL">All Verification / Confidence States</option>
+      <option value="CONFIRMED">CONFIRMED Only</option>
+      <option value="STRONG EVIDENCE">STRONG EVIDENCE / HIGH CONFIDENCE</option>
+      <option value="POTENTIAL">POTENTIAL / MEDIUM CONFIDENCE</option>
+      <option value="NEEDS MANUAL VERIFICATION">NEEDS MANUAL VERIFICATION</option>
+    </select>
+    <span id="visible-counter" class="meta" style="margin:0">Showing all</span>
+  </div>
+  <div class="filter-chips" id="sev-chips">
+    <button type="button" class="fbtn active" data-sev="ALL" onclick="setSevFilter('ALL', this)">ALL ($total_findings)</button>
+    <button type="button" class="fbtn" data-sev="CRITICAL" onclick="setSevFilter('CRITICAL', this)">CRITICAL</button>
+    <button type="button" class="fbtn" data-sev="HIGH" onclick="setSevFilter('HIGH', this)">HIGH</button>
+    <button type="button" class="fbtn" data-sev="MEDIUM" onclick="setSevFilter('MEDIUM', this)">MEDIUM</button>
+    <button type="button" class="fbtn" data-sev="LOW" onclick="setSevFilter('LOW', this)">LOW</button>
+    <button type="button" class="fbtn" data-sev="INFO" onclick="setSevFilter('INFO', this)">INFO</button>
+  </div>
+  <div class="target-tabs" id="target-tabs">
+    $target_tabs
+  </div>
+</div>
 
-<h2>Scoring methodology</h2>
-<div class="panel"><p style="font-size:.84rem;color:#8b949e">$methodology</p></div>
+<h2>Sortable &amp; Filterable Findings Table</h2>
+<div class="panel">
+  <div class="table-wrap">
+    <table id="findings-table">
+      <thead>
+        <tr>
+          <th class="sortable" data-col="0" data-type="sev" onclick="sortTable(0, 'sev', this)">Severity</th>
+          <th class="sortable" data-col="1" data-type="conf" onclick="sortTable(1, 'conf', this)">Verification / Confidence</th>
+          <th class="sortable" data-col="2" data-type="text" onclick="sortTable(2, 'text', this)">Target</th>
+          <th class="sortable" data-col="3" data-type="text" onclick="sortTable(3, 'text', this)">Category / OWASP</th>
+          <th class="sortable" data-col="4" data-type="text" onclick="sortTable(4, 'text', this)">Finding &amp; Evidence</th>
+          <th class="sortable" data-col="5" data-type="text" onclick="sortTable(5, 'text', this)">Param / CWE</th>
+        </tr>
+      </thead>
+      <tbody id="findings-tbody">
+        $table_rows
+      </tbody>
+    </table>
+  </div>
+</div>
 
-<h2>Scan limitations</h2>
+<h2>Confirmed &amp; Strong-Evidence Findings (By Target)</h2>
+<div id="confirmed-sections">
+  $sections
+</div>
+
+<h2>Needs Manual Verification &amp; Potential Indicators (Separated)</h2>
+<div class="manual-section" id="manual-verification-section">
+  <div class="manual-header">
+    <span>&#9888; Heuristic Indicators &amp; Findings Requiring Manual Verification</span>
+    <span class="chip chip-manual">$manual_count item(s)</span>
+  </div>
+  <p class="manual-note">
+    Items in this section are passive/heuristic indicators or require multi-account / controlled-environment validation.
+    They are separated from confirmed findings to prevent false-positive triage noise.
+  </p>
+  $manual_sections
+</div>
+
+<h2>Scoring Methodology</h2>
+<div class="panel"><p style="font-size:.84rem;color:var(--dim)">$methodology</p></div>
+
+<h2>Scan Limitations</h2>
 <div class="panel"><ul class="lim">$limitations</ul></div>
 
 <footer>
-TSMSS &mdash; non-destructive authorized assessment. Confidence levels describe evidence
-strength, not exploitability. Confirm all HIGH and MEDIUM items manually before remediation
-planning.
+TSMSS 2.0 Ultimate Edition &mdash; Non-destructive authorized security assessment platform (OWASP WSTG v4.2 / Top 10:2025 / API Top 10:2023 aligned).
 </footer>
+
+<script>
+(function(){
+  var currentSev = "ALL";
+  var currentTarget = "ALL";
+  var sortState = {col: -1, asc: true};
+
+  window.setSevFilter = function(sev, btn){
+    currentSev = sev;
+    var btns = document.querySelectorAll("#sev-chips .fbtn");
+    for(var i=0;i<btns.length;i++){ btns[i].classList.remove("active"); }
+    if(btn) btn.classList.add("active");
+    applyFilters();
+  };
+
+  window.setTargetTab = function(targetUrl, btn){
+    currentTarget = targetUrl;
+    var tabs = document.querySelectorAll("#target-tabs .tab-btn");
+    for(var i=0;i<tabs.length;i++){ tabs[i].classList.remove("active"); }
+    if(btn) btn.classList.add("active");
+    applyFilters();
+  };
+
+  window.applyFilters = function(){
+    var q = (document.getElementById("filter-search").value || "").toLowerCase();
+    var conf = document.getElementById("filter-conf").value || "ALL";
+    var items = document.querySelectorAll(".filterable-item");
+    var shown = 0;
+    for(var i=0;i<items.length;i++){
+      var el = items[i];
+      var sev = el.getAttribute("data-sev") || "";
+      var tgt = el.getAttribute("data-target") || "";
+      var vstat = el.getAttribute("data-vstat") || "";
+      var cval = el.getAttribute("data-conf") || "";
+      var text = (el.textContent || "").toLowerCase();
+      var okSev = (currentSev === "ALL" || sev === currentSev);
+      var okTgt = (currentTarget === "ALL" || tgt === currentTarget);
+      var okConf = (conf === "ALL" || vstat === conf || cval === conf);
+      var okQuery = (!q || text.indexOf(q) !== -1);
+      if(okSev && okTgt && okConf && okQuery){
+        el.style.display = "";
+        if(el.tagName === "TR") shown++;
+      } else {
+        el.style.display = "none";
+      }
+    }
+    var targetBlocks = document.querySelectorAll(".target-block");
+    for(var j=0;j<targetBlocks.length;j++){
+      var tb = targetBlocks[j];
+      var btgt = tb.getAttribute("data-target") || "";
+      tb.style.display = (currentTarget === "ALL" || btgt === currentTarget) ? "" : "none";
+    }
+    var ctr = document.getElementById("visible-counter");
+    if(ctr) ctr.textContent = "Showing " + shown + " row(s)";
+  };
+
+  window.sortTable = function(colIdx, kind, thEl){
+    var tbody = document.getElementById("findings-tbody");
+    if(!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr.filterable-item"));
+    var asc = (sortState.col === colIdx) ? !sortState.asc : true;
+    sortState = {col: colIdx, asc: asc};
+
+    var allTh = document.querySelectorAll("#findings-table th.sortable");
+    for(var i=0;i<allTh.length;i++){
+      allTh[i].classList.remove("sort-asc", "sort-desc");
+    }
+    if(thEl) thEl.classList.add(asc ? "sort-asc" : "sort-desc");
+
+    rows.sort(function(a, b){
+      var ca = a.children[colIdx], cb = b.children[colIdx];
+      if(!ca || !cb) return 0;
+      if(kind === "sev" || kind === "conf"){
+        var ra = parseInt(ca.getAttribute("data-rank") || "99", 10);
+        var rb = parseInt(cb.getAttribute("data-rank") || "99", 10);
+        return asc ? (ra - rb) : (rb - ra);
+      }
+      var ta = (ca.textContent || "").trim().toLowerCase();
+      var tb = (cb.textContent || "").trim().toLowerCase();
+      if(ta < tb) return asc ? -1 : 1;
+      if(ta > tb) return asc ? 1 : -1;
+      return 0;
+    });
+    for(var k=0;k<rows.length;k++){
+      tbody.appendChild(rows[k]);
+    }
+  };
+})();
+</script>
 </body>
 </html>

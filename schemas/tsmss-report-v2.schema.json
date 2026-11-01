@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tsmss.local/schemas/tsmss-report-v2.schema.json",
+  "title": "TSMSS 2.0 Ultimate Edition AI-Readable Security Assessment Report",
+  "type": "object",
+  "required": [
+    "report_id",
+    "scanner_version",
+    "report_timestamp",
+    "target_inventory",
+    "scan_scope",
+    "methodology",
+    "standards_versions",
+    "limitations",
+    "findings"
+  ],
+  "properties": {
+    "report_id": { "type": "string", "minLength": 1 },
+    "scanner_version": { "type": "string", "minLength": 1 },
+    "report_timestamp": { "type": "string", "minLength": 1 },
+    "target_inventory": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "scan_scope": { "type": "object" },
+    "methodology": { "type": "string" },
+    "standards_versions": {
+      "type": "object",
+      "required": ["owasp_wstg", "owasp_top10", "owasp_api_top10", "owasp_asvs"],
+      "properties": {
+        "owasp_wstg": { "type": "string" },
+        "owasp_top10": { "type": "string" },
+        "owasp_api_top10": { "type": "string" },
+        "owasp_asvs": { "type": "string" },
+        "owasp_masvs": { "type": "string" }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "finding_id",
+          "target",
+          "endpoint",
+          "category",
+          "title",
+          "description",
+          "severity",
+          "confidence",
+          "verification_status",
+          "evidence",
+          "detection_method",
+          "OWASP_reference",
+          "WSTG_reference",
+          "CWE",
+          "CVE",
+          "impact",
+          "remediation",
+          "false_positive_notes",
+          "timestamp"
+        ],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "target": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "category": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"]
+          },
+          "confidence": { "type": "string" },
+          "verification_status": {
+            "type": "string",
+            "enum": [
+              "CONFIRMED",
+              "STRONG EVIDENCE",
+              "POTENTIAL",
+              "NEEDS MANUAL VERIFICATION"
+            ]
+          },
+          "evidence": { "type": "string" },
+          "detection_method": { "type": "string" },
+          "OWASP_reference": { "type": "string" },
+          "WSTG_reference": { "type": "string" },
+          "CWE": { "type": ["string", "null"] },
+          "CVE": { "type": ["string", "null"] },
+          "impact": { "type": "string" },
+          "remediation": { "type": "string" },
+          "false_positive_notes": { "type": "string" },
+          "timestamp": { "type": "string" }
+        }
+      }
+    }
+  }
+}
