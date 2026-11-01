@@ -62,8 +62,9 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < requirements.txt
 
 hdr "6. Directories"
-for d in config core modules ui templates reports reports/html reports/json \
-         reports/txt reports/csv database logs tests tests/fixtures; do
+for d in config core modules ui ai schemas docs templates reports reports/html reports/json \
+         reports/jsonl reports/md reports/txt reports/csv reports/sarif reports/ai_packages \
+         database logs tests tests/fixtures; do
   mkdir -p "$d" && ok "$d"
 done
 
@@ -88,7 +89,7 @@ fi
 
 hdr "9. Self-test"
 [ -d modules ] || { err "modules/ missing at repo root"; FAILED=$((FAILED+1)); }
-python -m compileall -q core modules ui main.py config.py >/dev/null 2>&1 \
+python -m compileall -q core modules ui ai main.py config.py >/dev/null 2>&1 \
   && ok "All sources compile" || { err "Compile errors"; FAILED=$((FAILED+1)); }
 python tests/selftest.py && ok "Self-test passed" || { err "Self-test failed"; FAILED=$((FAILED+1)); }
 

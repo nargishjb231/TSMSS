@@ -115,6 +115,44 @@ class TestRunScanSmoke(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(row["score"])
         self.assertGreater(row["score"], 0, "score floored at 0 by header noise")
 
+    async def test_resume_unfinished_targets_from_sqlite(self):
+        from core.finding import Finding
+
+        db = self._runtime()
+        cfg = app.RUNTIME["config"]
+        done_url = "http://127.0.0.1:9999/"
+        scan_id = db.create_scan(cfg.data, 2, "interrupted-batch")
+        db.add_targets(scan_id, [done_url, self.url])
+        db.set_target_status(scan_id, done_url, "done", score=95, requests=4)
+        db.add_findings(scan_id, [
+            Finding(
+                target=done_url,
+                category="HTTP Security",
+                title="Pre-existing finding on finished target",
+                severity="LOW",
+                description="Already recorded before interruption.",
+                evidence="HTTP/1.1 200 OK",
+                module="http_security",
+                confidence="CONFIRMED",
+            )
+        ])
+        db.finish_scan(scan_id, "interrupted")
+
+        resumed_id = await app.run_scan(
+            [],
+            "resume-smoke",
+            auto_reports=False,
+            resume_scan_id=scan_id,
+        )
+        self.assertEqual(resumed_id, scan_id)
+        statuses = {t["url"]: t["status"] for t in db.targets(scan_id)}
+        self.assertEqual(statuses[done_url], "done")
+        self.assertEqual(statuses[self.url], "done")
+        findings_done = db.findings(scan_id, target=done_url)
+        findings_resumed = db.findings(scan_id, target=self.url)
+        self.assertEqual(len(findings_done), 1)
+        self.assertGreater(len(findings_resumed), 0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

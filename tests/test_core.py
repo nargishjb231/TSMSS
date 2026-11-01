@@ -356,5 +356,284 @@ class TestCliSubcommands(unittest.TestCase):
                 db.close()
 
 
+class TestHttpClientRetryPolicy(unittest.IsolatedAsyncioTestCase):
+    async def test_retry_on_429_5xx_and_reset_never_on_other_4xx(self):
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        import httpx
+        from config import Config
+        from core.http_client import (
+            HttpClient,
+            compute_backoff,
+            parse_retry_after,
+            should_retry_status,
+        )
+        from core.scope import ScopeGuard
+
+        # 1. Status classification rules
+        for code in (408, 429, 500, 502, 503, 504):
+            self.assertTrue(should_retry_status(code), f"expected retry for {code}")
+        for code in (200, 301, 400, 401, 403, 404, 405, 422):
+            self.assertFalse(should_retry_status(code), f"expected no retry for {code}")
+
+        # 2. Retry-After parsing (delta-seconds and HTTP-date)
+        self.assertAlmostEqual(parse_retry_after("2.5"), 2.5, places=2)
+        self.assertEqual(compute_backoff(0, retry_after="999", max_wait=10.0), 10.0)
+        self.assertIsNotNone(parse_retry_after("Wed, 21 Oct 2099 07:28:00 GMT"))
+        self.assertGreater(compute_backoff(0, backoff_base=0.2), 0.0)
+
+        from core.rate_limiter import RateLimiter
+        cfg = Config()
+        cfg.set("scope.allow_private_targets", True)
+        cfg.set("scan.max_retries", 2)
+        cfg.set("scan.max_requests_per_second", 500.0)
+        cfg.set("scan.per_host_requests_per_second", 500.0)
+        cfg.set("scan.delay_between_requests", 0)
+        scope = ScopeGuard([], allow_private=True)
+        limiter = RateLimiter(500.0, 500.0)
+
+        async with HttpClient(cfg, scope, limiter, asyncio.Event(), {"requests": 0}) as client:
+            # 3. 404 must NEVER retry (exact 1 attempt)
+            attempts_404 = 0
+
+            async def fake_request_404(method, url, headers=None, content=None):
+                nonlocal attempts_404
+                attempts_404 += 1
+                req = httpx.Request(method, url)
+                return httpx.Response(404, headers={"Content-Type": "text/plain"}, content=b"not found", request=req)
+
+            with patch.object(client._client, "request", side_effect=fake_request_404):
+                res = await client.get("http://127.0.0.1:8080/missing")
+                self.assertIsNotNone(res)
+                self.assertEqual(res.status, 404)
+                self.assertEqual(attempts_404, 1)
+
+            # 4. 429 with Retry-After + 503 retries and succeeds on 3rd attempt
+            attempts_retry = 0
+
+            async def fake_request_429_503_200(method, url, headers=None, content=None):
+                nonlocal attempts_retry
+                attempts_retry += 1
+                req = httpx.Request(method, url)
+                if attempts_retry == 1:
+                    return httpx.Response(429, headers={"Retry-After": "0.01"}, content=b"rate limit", request=req)
+                if attempts_retry == 2:
+                    return httpx.Response(503, headers={}, content=b"busy", request=req)
+                return httpx.Response(200, headers={"Content-Type": "text/plain"}, content=b"ok", request=req)
+
+            with patch.object(client._client, "request", side_effect=fake_request_429_503_200):
+                res_ok = await client.get("http://127.0.0.1:8080/flaky")
+                self.assertIsNotNone(res_ok)
+                self.assertEqual(res_ok.status, 200)
+                self.assertEqual(attempts_retry, 3)
+
+            # 5. ConnectionResetError retries and succeeds
+            attempts_reset = 0
+
+            async def fake_request_reset(method, url, headers=None, content=None):
+                nonlocal attempts_reset
+                attempts_reset += 1
+                if attempts_reset == 1:
+                    raise ConnectionResetError("connection reset by peer")
+                req = httpx.Request(method, url)
+                return httpx.Response(200, headers={}, content=b"recovered", request=req)
+
+            with patch.object(client._client, "request", side_effect=fake_request_reset), \
+                 patch("core.http_client.compute_backoff", return_value=0.01):
+                res_rec = await client.get("http://127.0.0.1:8080/reset")
+                self.assertIsNotNone(res_rec)
+                self.assertEqual(res_rec.status, 200)
+                self.assertEqual(attempts_reset, 2)
+
+
+class TestBaselineDiffSarifAndAiPackage(unittest.TestCase):
+    def test_baseline_exact_four_tuple_fingerprint(self):
+        import tempfile
+        from core.verification import filter_by_baseline, load_baseline, save_baseline
+
+        f1 = Finding(
+            target="https://example.com/",
+            category="HTTP Security",
+            title="Missing HSTS",
+            severity="MEDIUM",
+            description="No Strict-Transport-Security header.",
+            evidence="HTTP/1.1 200 OK\nServer: nginx",
+            module="http_security",
+            parameter="Strict-Transport-Security",
+            confidence="CONFIRMED",
+        )
+        f2_different_evidence = Finding(
+            target="https://example.com/",
+            category="HTTP Security",
+            title="Missing HSTS",
+            severity="MEDIUM",
+            description="No Strict-Transport-Security header.",
+            evidence="HTTP/1.1 200 OK\nServer: apache",
+            module="http_security",
+            parameter="Strict-Transport-Security",
+            confidence="CONFIRMED",
+        )
+        self.assertEqual(len(f1.fingerprint()), 4)
+        self.assertNotEqual(f1.fingerprint(), f2_different_evidence.fingerprint())
+
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            bpath = Path(d) / "baseline.json"
+            save_baseline(bpath, [f1])
+            loaded = load_baseline(bpath)
+            self.assertIn(f1.fingerprint(), loaded)
+
+            kept, suppressed = filter_by_baseline([f1, f2_different_evidence], loaded)
+            self.assertEqual(suppressed, 1)
+            self.assertEqual(len(kept), 1)
+            self.assertEqual(kept[0].evidence, f2_different_evidence.evidence)
+
+    def test_diff_sarif_and_ai_package_reports(self):
+        import json
+        import tempfile
+        from ai.packager import validate_ai_report
+        from core.report_manager import ReportManager, diff_scans
+
+        base = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            tmp = Path(d)
+            rm = ReportManager(tmp / "reports", base / "templates" / "report.html")
+
+            f_common = Finding(
+                target="https://a.example.com/",
+                category="HTTP Security",
+                title="Missing CSP",
+                severity="MEDIUM",
+                description="No Content-Security-Policy header.",
+                evidence="HTTP 200 headers: server=nginx",
+                module="http_security",
+                confidence="CONFIRMED",
+                cwe="CWE-693",
+            ).to_dict()
+            f_fixed = Finding(
+                target="https://a.example.com/",
+                category="Cookie Security",
+                title="Cookie missing HttpOnly",
+                severity="LOW",
+                description="sid cookie lacks HttpOnly.",
+                evidence="Set-Cookie: sid=123; Path=/",
+                module="cookie_security",
+                parameter="sid",
+                confidence="CONFIRMED",
+                cwe="CWE-1004",
+            ).to_dict()
+            f_new = Finding(
+                target="https://b.example.com/",
+                category="API Security",
+                title="API key passed in URL query string",
+                severity="HIGH",
+                description="Secret token in URL query.",
+                evidence="GET /api/v1/items?api_key=secret1234567890",
+                module="api_security",
+                parameter="api_key",
+                confidence="STRONG EVIDENCE",
+                cwe="CWE-598",
+            ).to_dict()
+
+            targets = [
+                {"url": "https://a.example.com/", "status": "done", "score": 92, "grade": "A", "request_count": 10, "duration_s": 1.0},
+                {"url": "https://b.example.com/", "status": "done", "score": 85, "grade": "B", "request_count": 12, "duration_s": 1.2},
+            ]
+            prev_json = rm.json_report({"id": "prev1", "profile": "standard"}, targets, {
+                "https://a.example.com/": [f_common, f_fixed],
+                "https://b.example.com/": [],
+            })
+            # Copy prev_json before curr_json overwrites same-second timestamp filename if within 1s
+            prev_copy = tmp / "prev_saved.json"
+            prev_copy.write_text(prev_json.read_text(encoding="utf-8"), encoding="utf-8")
+
+            curr_json = rm.json_report({"id": "curr2", "profile": "standard"}, targets, {
+                "https://a.example.com/": [f_common],
+                "https://b.example.com/": [f_new],
+            })
+
+            # 1. Validate AI JSON report schema
+            payload = json.loads(curr_json.read_text(encoding="utf-8"))
+            self.assertEqual(validate_ai_report(payload), [])
+
+            # 2. Scan diffing (new / fixed / still_open per target)
+            diff = diff_scans({
+                "https://a.example.com/": [f_common],
+                "https://b.example.com/": [f_new],
+            }, prev_copy)
+            self.assertEqual(diff["totals"]["new"], 1)
+            self.assertEqual(diff["totals"]["fixed"], 1)
+            self.assertEqual(diff["totals"]["still_open"], 1)
+            self.assertEqual(len(diff["targets"]["https://a.example.com/"]["fixed"]), 1)
+            self.assertEqual(len(diff["targets"]["https://a.example.com/"]["still_open"]), 1)
+            self.assertEqual(len(diff["targets"]["https://b.example.com/"]["new"]), 1)
+
+            # 3. SARIF 2.1.0 report
+            sarif_path = rm.sarif_report({"id": "curr2"}, targets, {
+                "https://a.example.com/": [f_common],
+                "https://b.example.com/": [f_new],
+            })
+            sarif = json.loads(sarif_path.read_text(encoding="utf-8"))
+            self.assertEqual(sarif["version"], "2.1.0")
+            self.assertEqual(len(sarif["runs"][0]["results"]), 2)
+            self.assertGreaterEqual(len(sarif["runs"][0]["tool"]["driver"]["rules"]), 2)
+
+            # 4. AI Package export
+            pkg_meta = rm.ai_package_report({"id": "curr2"}, targets, {
+                "https://a.example.com/": [f_common],
+                "https://b.example.com/": [f_new],
+            })
+            pkg_dir = Path(pkg_meta["package_dir"])
+            self.assertTrue((pkg_dir / "ai_report_validated.json").exists())
+            self.assertTrue((pkg_dir / "ai_findings.jsonl").exists())
+            self.assertTrue((pkg_dir / "AI_ANALYSIS_PROMPT.md").exists())
+            self.assertTrue(list((pkg_dir / "chunks").glob("chunk_*.json")))
+
+
+class TestProfilesScopeAndDiagnostics(unittest.TestCase):
+    def test_profiles_scope_patterns_and_device_diagnostics(self):
+        from config import Config, VALID_PROFILES
+        from core.diagnostics import collect_device_diagnostics
+        from core.scope import ScopeGuard
+
+        # 1. Profiles
+        for p in VALID_PROFILES:
+            cfg = Config()
+            cfg.apply_profile(p)
+            self.assertEqual(cfg.validate(), [], f"profile {p} produced invalid config")
+
+        cfg_stealth = Config()
+        cfg_stealth.apply_profile("stealth")
+        self.assertTrue(cfg_stealth.get("active.safe_mode"))
+        self.assertEqual(cfg_stealth.get("scan.concurrency_targets"), 1)
+
+        with self.assertRaises(ValueError):
+            Config().apply_profile("nonexistent_profile")
+
+        # 2. Scope include/exclude patterns and discovered subdomain check
+        guard = ScopeGuard(
+            ["example.com"],
+            allow_private=True,
+            allow_subdomains=True,
+            include_patterns=["/api/*"],
+            exclude_patterns=["/api/internal/*", "staging.example.com"],
+        )
+        self.assertTrue(guard.check_target("https://example.com/api/v1/users").allowed)
+        self.assertFalse(guard.check_target("https://example.com/public/index.html").allowed)
+        self.assertFalse(guard.check_target("https://example.com/api/internal/debug").allowed)
+        self.assertTrue(guard.check_discovered_subdomain("api.example.com", "example.com").allowed)
+        self.assertFalse(guard.check_discovered_subdomain("staging.example.com", "example.com").allowed)
+
+        guard_no_sub = ScopeGuard(["example.com"], allow_private=True, allow_subdomains=False)
+        self.assertFalse(guard_no_sub.check_discovered_subdomain("sub.example.com", "example.com").allowed)
+
+        # 3. Device diagnostics (local Termux/Android capability check)
+        diag = collect_device_diagnostics()
+        self.assertIn("environment", diag)
+        self.assertIn("memory", diag)
+        self.assertIn("storage", diag)
+        self.assertIn("compatibility_matrix", diag)
+        self.assertGreater(len(diag["compatibility_matrix"]), 5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
