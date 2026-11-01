@@ -228,3 +228,4 @@ config/settings.yaml
 
 # ad-hoc target lists
 .run/
+tests/tmp*/

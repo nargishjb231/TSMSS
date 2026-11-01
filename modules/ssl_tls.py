@@ -117,12 +117,13 @@ class SslTlsModule(BaseModule):
                 remediation="Track the issuing CA for revocation and renewal SLAs.",
                 tags=["tls", "inventory"]))
         bits = info.get("key_bits")
-        if bits and bits < 2048:
+        family = info.get("key_family", "")
+        if family == "rsa" and bits and bits < 2048:
             out.append(self.make(
                 ctx, title=f"Certificate key length is {bits} bits",
                 severity=MEDIUM, cwe="CWE-326",
-                description="Below the 2048-bit RSA baseline.",
-                evidence=f"public_key_bits={bits}",
+                description="RSA modulus is below the 2048-bit baseline.",
+                evidence=f"key=rsa bits={bits}",
                 detection_method="Certificate parsing", confidence=CONFIRMED,
                 remediation="Reissue with RSA >= 2048 or ECDSA P-256.",
                 tags=["tls", "crypto"]))
@@ -143,12 +144,20 @@ class SslTlsModule(BaseModule):
             return {}
         try:
             from cryptography import x509
-            from cryptography.hazmat.primitives.asymmetric import rsa, ec, dsa
+            from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, ed448
             cert = x509.load_der_x509_certificate(der)
             pub = cert.public_key()
             bits = getattr(pub, "key_size", None)
-            if isinstance(pub, ec.EllipticCurvePublicKey):
+            family = ""
+            if isinstance(pub, rsa.RSAPublicKey):
+                family = "rsa"
+            elif isinstance(pub, ec.EllipticCurvePublicKey):
+                family = "ec"
                 bits = pub.curve.key_size
+            elif isinstance(pub, ed25519.Ed25519PublicKey):
+                family = "ed25519"
+            elif isinstance(pub, ed448.Ed448PublicKey):
+                family = "ed448"
             sans: list[str] = []
             try:
                 ext = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName)
@@ -160,7 +169,7 @@ class SslTlsModule(BaseModule):
                 "issuer": cert.issuer.rfc4514_string(),
                 "not_before": cert.not_valid_before_utc,
                 "not_after": cert.not_valid_after_utc,
-                "sans": sans, "key_bits": bits,
+                "sans": sans, "key_bits": bits, "key_family": family,
                 "sig_alg": cert.signature_algorithm_oid._name,
             }
         except Exception:

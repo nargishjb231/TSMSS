@@ -13,6 +13,16 @@ PROBE_METHODS = ["OPTIONS", "TRACE", "PUT", "DELETE", "PATCH", "DEBUG"]
 SERVER_HEADERS = ("server", "x-powered-by", "x-aspnet-version", "x-generator",
                   "x-drupal-cache", "x-runtime", "x-rack-cache")
 
+def _header_tokens(resp, name):
+    """Split a possibly repeated header into lowercased, de-duplicated tokens."""
+    out=[]
+    for chunk in resp.headers.get(name.lower(), "").split(","):
+        tok=chunk.strip().lower()
+        if tok and tok not in out:
+            out.append(tok)
+    return out
+
+
 VERSION_RE = re.compile(r"(\d+\.\d+(?:\.\d+)*)")
 
 
@@ -60,13 +70,14 @@ class HttpSecurityModule(BaseModule):
                     remediation="Remove 'unsafe-inline'/'unsafe-eval' in favour of nonces or "
                                 "hashes; avoid wildcard sources.",
                     tags=["headers", "csp"]))
-        xfo = resp.header("x-frame-options").lower()
-        if xfo and xfo not in ("deny", "sameorigin"):
+        xfo = _header_tokens(resp, "x-frame-options")
+        bad_xfo = [t for t in xfo if t not in ("deny", "sameorigin")]
+        if bad_xfo:
             found.append(self.make(
                 ctx, title="X-Frame-Options uses an invalid or legacy value",
                 severity=LOW, cwe="CWE-1021",
-                description=f"Value '{xfo}' is not DENY or SAMEORIGIN.",
-                evidence=f"X-Frame-Options: {xfo}",
+                description=f"Value(s) {', '.join(bad_xfo)} are not DENY or SAMEORIGIN.",
+                evidence=f"X-Frame-Options: {', '.join(xfo)}",
                 detection_method="Header value validation", confidence=CONFIRMED,
                 remediation="Use 'DENY' or 'SAMEORIGIN', or CSP frame-ancestors.",
                 tags=["headers"]))
@@ -103,7 +114,10 @@ class HttpSecurityModule(BaseModule):
                 p = await ctx.http.request("GET", plain, retry=False)
             except Exception:
                 p = None
-            if p and p.ok and p.status < 400 and not (p.final_url or "").startswith("https://"):
+            landed_https = (p and p.ok and p.status < 400
+                            and (p.final_url or p.url).startswith("https://"))
+            redirected = bool(p and p.hops)
+            if p and p.ok and p.status < 400 and not landed_https and not redirected:
                 out.append(self.make(
                     ctx, title="HTTP origin reachable without redirect to HTTPS",
                     severity=LOW, cwe="CWE-319",
@@ -136,6 +150,18 @@ class HttpSecurityModule(BaseModule):
                         remediation="Raise max-age to at least 31536000.",
                         tags=["transport", "hsts"]))
         return out
+
+    async def _xcto(self, ctx, resp):
+        raw = resp.header("x-content-type-options")
+        if raw and "nosniff" not in _header_tokens(resp, "x-content-type-options"):
+            return [self.make(
+                ctx, title="X-Content-Type-Options set without nosniff",
+                severity=LOW, cwe="CWE-693",
+                description="The header is present but nosniff is missing from the value.",
+                evidence=f"X-Content-Type-Options: {raw}",
+                detection_method="Header value validation", confidence=CONFIRMED,
+                remediation="Send: X-Content-Type-Options: nosniff", tags=["headers"])]
+        return []
 
     async def _disclosure(self, ctx, resp):
         out = []
@@ -193,7 +219,8 @@ class HttpSecurityModule(BaseModule):
         return out
 
     async def _clickjacking(self, ctx, resp):
-        xfo = resp.header("x-frame-options")
+        xfo = [t for t in _header_tokens(resp, "x-frame-options")
+               if t in ("deny", "sameorigin")]
         csp = resp.header("content-security-policy")
         framed = "frame-ancestors" in csp if csp else False
         if xfo or framed:

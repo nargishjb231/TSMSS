@@ -429,6 +429,15 @@ def _print_rejections(rejected: list[dict]) -> None:
         console.print(f"[grey62]... and {len(rejected) - 15} more[/grey62]")
 
 
+def db_scans() -> list[list[str]]:
+    """Severity lists of every finding in the most recent scan."""
+    db = RUNTIME["db"]
+    rows = db.recent_scans(1)
+    if not rows:
+        return []
+    return [[r["severity"] for r in db.findings(rows[0]["id"])]]
+
+
 def cli(argv: list[str]) -> int:
     """Non-interactive entry point. Returns -1 to fall through to the menu."""
     ap = argparse.ArgumentParser(
@@ -440,6 +449,12 @@ def cli(argv: list[str]) -> int:
     ap.add_argument("-d", "--dry-run", metavar="FILE", help="validate FILE without scanning")
     ap.add_argument("-y", "--yes", action="store_true", help="skip the authorization prompt")
     ap.add_argument("--no-reports", action="store_true", help="skip report generation")
+    ap.add_argument("--min-confidence", default="",
+                    choices=["", "CONFIRMED", "HIGH CONFIDENCE", "MEDIUM CONFIDENCE",
+                             "LOW CONFIDENCE"],
+                    help="drop findings below this confidence")
+    ap.add_argument("--fail-on", default="", choices=["", "CRITICAL", "HIGH", "MEDIUM"],
+                    help="exit 2 when a finding at or above this severity exists")
     args = ap.parse_args(argv)
 
     source = args.list or args.dry_run or args.batch
@@ -473,7 +488,15 @@ def cli(argv: list[str]) -> int:
         console.print("[yellow]Authorization not confirmed.[/yellow]")
         return 1
 
+    RUNTIME["config"].set("scan.min_confidence", args.min_confidence)
     asyncio.run(run_scan(urls, f"batch:{source}", auto_reports=not args.no_reports))
+    if args.fail_on:
+        from config import SEVERITY_ORDER
+        limit = SEVERITY_ORDER.index(args.fail_on)
+        hits = [f for s in db_scans() for f in s if SEVERITY_ORDER.index(f) <= limit]
+        if hits:
+            console.print(f"[red]fail-on {args.fail_on}: {len(hits)} finding(s)[/red]")
+            return 2
     return 0
 
 

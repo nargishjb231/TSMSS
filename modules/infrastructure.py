@@ -9,6 +9,9 @@ import subprocess
 from core.finding import CONFIRMED, HIGH_CONF, HIGH, INFO, LOW, MEDIUM, NEEDS_MANUAL
 from modules.base import BaseModule
 
+# Ports that are expected on a public web host carry no weight.
+PORT_SEVERITY = {"80": INFO, "443": INFO, "8080": INFO, "8443": INFO}
+
 CDN_SIGNS = {
     "cloudflare": ("cloudflare", "cf-ray", "__cfduid", "cf-cache-status"),
     "akamai": ("akamai", "akamaighost", "x-akamai"),
@@ -93,13 +96,13 @@ class InfrastructureModule(BaseModule):
         open_ports = re.findall(r"^(\d+)/tcp\s+open\s+(\S+)", text, re.M)
         out = []
         for port, service in open_ports:
-            sev = MEDIUM if port not in ("80", "443") else INFO
+            sev = PORT_SEVERITY.get(port, MEDIUM)
             out.append(self.make(
                 ctx, title=f"Open port {port}/tcp ({service})",
                 severity=sev,
                 description="A reachable TCP service was identified on a non-standard or "
                             "standard port.",
-                evidence=text[-1500:], detection_method="nmap connect scan",
+                evidence=f"{port}/tcp open {service}", detection_method="nmap connect scan",
                 confidence=CONFIRMED,
                 remediation="Restrict non-public services at the firewall.",
                 tags=["infrastructure", "ports"]))

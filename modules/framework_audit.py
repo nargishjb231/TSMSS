@@ -8,8 +8,8 @@ from modules.base import BaseModule
 
 SIGNATURES = {
     "WordPress": [r"/wp-content/", r"/wp-includes/", r'name="generator" content="WordPress'],
-    "Laravel": [r"laravel_session", r"XSRF-TOKEN", r"Laravel"],
-    "Django": [r"csrfmiddlewaretoken", r"__admin_media_prefix__", r"django"],
+    "Laravel": [r"laravel_session", r"X-XSRF-TOKEN"],  # wordpress-fingerprint
+    "Django": [r"csrfmiddlewaretoken", r"__admin_media_prefix__"],
     "Rails": [r"csrf-token.*authenticity_token", r"_rails_session", r"X-Runtime"],
     "Next.js": [r"__NEXT_DATA__", r"/_next/static/"],
     "Nuxt": [r"__NUXT__", r"/_nuxt/"],
@@ -18,7 +18,7 @@ SIGNATURES = {
     "Drupal": [r"Drupal.settings", r"/sites/default/files/", r"X-Generator: Drupal"],
     "Joomla": [r"/media/system/js/", r'content="Joomla'],
     "ASP.NET": [r"__VIEWSTATE", r"X-AspNet-Version"],
-    "Flask": [r"Werkzeug", r"flask"],
+    "Flask": [r"Werkzeug/"],
 }
 
 FRAMEWORK_PATHS = {

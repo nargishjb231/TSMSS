@@ -63,6 +63,7 @@ class Fixture:
 
     def __exit__(self, *a):
         self.srv.shutdown()
+        self.srv.server_close()
 
 
 def make_ctx(url, config):

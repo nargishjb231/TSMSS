@@ -21,6 +21,25 @@ MODULE_ORDER = [
 ]
 
 
+_CONF_ORDER = {"CONFIRMED": 0, "HIGH CONFIDENCE": 1, "MEDIUM CONFIDENCE": 2,
+               "LOW CONFIDENCE": 3, "NEEDS MANUAL VERIFICATION": 4, "HEURISTIC": 4, "MANUAL": 4}
+
+
+def _dedupe(findings: list, min_conf: str = "") -> list:
+    """Drop repeats of the same (title, parameter) and anything below min_conf."""
+    floor = _CONF_ORDER.get((min_conf or "").upper())
+    seen, out = set(), []
+    for f in findings:
+        if floor is not None and _CONF_ORDER.get(f.confidence, 9) > floor:
+            continue
+        key = (f.title, f.parameter, f.severity)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f)
+    return out
+
+
 def build_modules(rules: dict, disabled=None) -> list:
     from modules import (api_security, authentication, authorization, cookies, cors,
                          dependency_audit, dns_security, framework_audit, http_security,
@@ -84,6 +103,7 @@ class TargetEngine:
                 error = f"{type(exc).__name__}: {exc}"
                 log.warning("target %s failed: %s\n%s", url, error, traceback.format_exc(limit=3))
 
+        findings = _dedupe(findings, self.config.get("scan.min_confidence", ""))
         findings.sort(key=lambda f: (severity_rank(f.severity), f.title))
         value, grade = score(findings)
         ctx_grade = grade

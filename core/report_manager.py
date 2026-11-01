@@ -5,6 +5,7 @@ import csv
 import html
 import io
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Template
@@ -33,6 +34,22 @@ LIMITATIONS = [
 ]
 
 
+_HEADER_BLOCK = re.compile(r"^(?:Response headers|GET \S+ -> \d+)$", re.M)
+
+
+def _trim_evidence(text, limit: int = 700) -> str:
+    """Header dumps are long and repeated; keep a bounded slice."""
+    text = str(text or "")
+    return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
+
+
+def _counts(rows: list[dict]) -> dict:
+    counts = {s: 0 for s in SEVERITY_ORDER}
+    for r in rows:
+        counts[r["severity"]] = counts.get(r["severity"], 0) + 1
+    return counts
+
+
 def _esc(value) -> str:
     return html.escape(str(value or ""))
 
@@ -46,7 +63,6 @@ class ReportManager:
 
     # ---- helpers ---------------------------------------------------------
     def _slug(self, url: str) -> str:
-        import re
         return re.sub(r"[^A-Za-z0-9]+", "_", url.replace("://", "_"))[:90].strip("_") or "target"
 
     def _path(self, fmt: str, name: str) -> Path:
@@ -54,10 +70,24 @@ class ReportManager:
         return self.base / fmt / f"{stamp}_{name}.{fmt}"
 
     @staticmethod
+    def mean_target_score(findings_by_target: dict) -> dict:
+        """Batch score is the mean of per-target scores, never a sum."""
+        scores = [score_counts(_counts(rows)) for rows in findings_by_target.values()]
+        if not scores:
+            return {"score": 100, "grade": "A", "counts": {s: 0 for s in SEVERITY_ORDER},
+                    "total": 0}
+        mean = round(sum(v for v, _ in scores) / len(scores))
+        worst = min(g for _, g in scores)
+        all_counts = {s: 0 for s in SEVERITY_ORDER}
+        for rows in findings_by_target.values():
+            for r in rows:
+                all_counts[r["severity"]] += 1
+        return {"score": mean, "grade": worst, "counts": all_counts,
+                "total": sum(all_counts.values())}
+
+    @staticmethod
     def summarize(rows: list[dict]) -> dict:
-        counts = {s: 0 for s in SEVERITY_ORDER}
-        for r in rows:
-            counts[r["severity"]] = counts.get(r["severity"], 0) + 1
+        counts = _counts(rows)
         value, grade = score_counts(counts)
         return {"counts": counts, "score": value, "grade": grade, "total": len(rows)}
 
@@ -107,7 +137,7 @@ class ReportManager:
                    findings_by_target: dict[str, list[dict]]) -> Path:
         buf = io.StringIO()
         all_rows = [f for rows in findings_by_target.values() for f in rows]
-        s = self.summarize(all_rows)
+        s = self.mean_target_score(findings_by_target)
         w = buf.write
         w("=" * 78 + "\nTSMSS SECURITY ASSESSMENT REPORT\n" + "=" * 78 + "\n")
         w(f"Scan ID     : {scan_meta.get('id')}\n")
@@ -161,7 +191,7 @@ class ReportManager:
     def html_report(self, scan_meta: dict, targets: list[dict],
                     findings_by_target: dict[str, list[dict]]) -> Path:
         all_rows = [f for rows in findings_by_target.values() for f in rows]
-        s = self.summarize(all_rows)
+        s = self.mean_target_score(findings_by_target)
         template = Template(self.template_path.read_text(encoding="utf-8"))
 
         target_rows = "\n".join(
@@ -200,7 +230,7 @@ class ReportManager:
     {f"<dt>CVE</dt><dd>{_esc(f['cve'])}</dd>" if f.get('cve') else ""}
   </dl>
   <p class="desc">{_esc(f['description'])}</p>
-  {f'<details><summary>Evidence</summary><pre>{_esc(f["evidence"])}</pre></details>' if f.get('evidence') else ""}
+  {f'<details><summary>Evidence</summary><pre>{_esc(_trim_evidence(f["evidence"]))}</pre></details>' if f.get('evidence') else ""}
   <p class="fix"><strong>Remediation:</strong> {_esc(f['remediation'])}</p>
 </article>""")
             sections.append(f"""
