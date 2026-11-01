@@ -1,7 +1,6 @@
 """Cookie attribute review."""
 from __future__ import annotations
 
-import time
 
 from core.finding import CONFIRMED, HIGH, INFO, LOW, MEDIUM
 from modules.base import BaseModule

@@ -104,7 +104,7 @@ class AuthenticationModule(BaseModule):
         if resp is None:
             return []
         tokens = set(JWT_RE.findall(resp.body[:200_000]))
-        for cookie in resp.get_all("set-cookie"):
+        for cookie in resp.set_cookies:
             tokens.update(JWT_RE.findall(cookie))
         out = []
         for token in list(tokens)[:3]:
