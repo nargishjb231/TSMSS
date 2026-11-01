@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import random
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -84,7 +87,50 @@ def _extract_multi_headers(resp_headers) -> dict[str, list[str]]:
     return multi
 
 
-_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+_TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
+
+
+def should_retry_status(status: int) -> bool:
+    """Return True only for 408, 429, and 5xx responses; never retry other 4xx."""
+    if status in (408, 429):
+        return True
+    if 500 <= status <= 599:
+        return True
+    return False
+
+
+def parse_retry_after(value: str | None) -> float | None:
+    """Parse Retry-After header (delta-seconds or RFC 7231 HTTP-date)."""
+    if not value:
+        return None
+    raw = value.strip()
+    if not raw:
+        return None
+    try:
+        secs = float(raw)
+        return max(0.0, secs)
+    except ValueError:
+        pass
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        delta = (dt - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, delta)
+    except Exception:
+        return None
+
+
+def compute_backoff(attempt: int, backoff_base: float = 1.6,
+                    retry_after: str | None = None,
+                    max_wait: float = 30.0) -> float:
+    """Exponential backoff with jitter, honouring Retry-After when present."""
+    parsed = parse_retry_after(retry_after)
+    if parsed is not None:
+        return min(parsed, max_wait)
+    exp = (max(1.1, backoff_base) ** attempt) * 0.8
+    jitter = random.uniform(0.05, 0.45 * max(1.0, backoff_base))
+    return min(exp + jitter, max_wait)
 
 
 class HttpClient:
@@ -97,6 +143,7 @@ class HttpClient:
         self.counter = counter
         self.timeout = float(config.get("scan.request_timeout", 20))
         self.max_retries = int(config.get("scan.max_retries", 3))
+        self.retry_backoff = float(config.get("scan.retry_backoff", 1.6))
         self.max_redirects = int(config.get("scan.max_redirects", 5))
         self.max_bytes = int(config.get("scan.max_response_bytes", 1_048_576))
         self.delay = float(config.get("scan.delay_between_requests", 0.12))
@@ -126,6 +173,9 @@ class HttpClient:
     def budget_exhausted(self) -> bool:
         return self.counter.get("requests", 0) >= self.request_cap
 
+    async def get(self, url: str, **kwargs) -> Fetched:
+        return await self.request("GET", url, **kwargs)
+
     async def request(self, method: str, url: str, *, allow_redirects: bool = False,
                       retry: bool = True, **kwargs) -> Fetched:
         self._check_stop()
@@ -154,17 +204,18 @@ class HttpClient:
                                   final_url=str(resp.url),
                                   set_cookies=resp.headers.get_list("set-cookie"),
                                   multi_headers=multi)
-                if resp.status_code in _TRANSIENT_STATUS and attempt < attempts:
+                if should_retry_status(resp.status_code) and attempt < attempts:
                     await self._honour_retry_after(resp, attempt, host)
                     last = fetched
                     continue
                 if allow_redirects:
                     await self._walk_redirects(fetched, headers, attempt, host)
                 return fetched
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
+            except (httpx.TimeoutException, httpx.TransportError, ConnectionResetError, OSError) as exc:
                 last = Fetched(url, 0, {}, "", 0.0, error=f"{type(exc).__name__}: {exc}")
                 if attempt < attempts:
-                    await asyncio.sleep(min(2 ** attempt * 0.8, 8))
+                    wait = compute_backoff(attempt, self.retry_backoff, None, max_wait=12.0)
+                    await asyncio.sleep(wait)
                     continue
                 return last
             except httpx.HTTPError as exc:
@@ -187,16 +238,8 @@ class HttpClient:
             return raw.decode("utf-8", errors="replace")
 
     async def _honour_retry_after(self, resp, attempt: int, host: str) -> None:
-        ra = resp.headers.get("retry-after")
-        wait = None
-        if ra:
-            try:
-                wait = float(ra)
-            except ValueError:
-                wait = None
-        if wait is None:
-            wait = min(2 ** attempt * 1.5, 20)
-        wait = min(wait, 30)
+        ra = resp.headers.get("retry-after") if hasattr(resp, "headers") else None
+        wait = compute_backoff(attempt, self.retry_backoff, ra, max_wait=30.0)
         self.limiter.backoff_host(host, wait)
         await asyncio.sleep(wait)
 
