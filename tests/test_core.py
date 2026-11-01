@@ -293,5 +293,68 @@ class TestTargetScanResultDataclass(unittest.TestCase):
             self.assertTrue(Path(written["html"]).exists())
 
 
+class TestCliSubcommands(unittest.TestCase):
+    def test_legacy_flags_and_subcommands_scan_list_report_config(self):
+        import asyncio
+        import tempfile
+        from unittest.mock import patch
+        import main
+        from config import Config
+        from core.database import Database
+        from core.report_manager import ReportManager
+
+        base = Path(__file__).resolve().parent.parent
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
+            tmp = Path(d)
+            targets_file = tmp / "targets.txt"
+            targets_file.write_text("https://example.com/\nhttps://sub.example.com/\nbad host\n",
+                                    encoding="utf-8")
+
+            db = Database(tmp / "test.db")
+            try:
+                cfg = Config()
+                rm = ReportManager(tmp / "reports", base / "templates" / "report.html")
+                main.RUNTIME.update({
+                    "config": cfg,
+                    "db": db,
+                    "reports": rm,
+                    "stop": asyncio.Event(),
+                    "active_scan": None,
+                })
+
+                # No args falls through to menu (-1)
+                self.assertEqual(main.cli([]), -1)
+
+                # Legacy --list and --dry-run
+                self.assertEqual(main.cli(["--list", str(targets_file)]), 0)
+                self.assertEqual(main.cli(["--dry-run", str(targets_file)]), 0)
+
+                # Subcommand: list
+                self.assertEqual(main.cli(["list", str(targets_file)]), 0)
+
+                # Subcommand: scan --dry-run
+                self.assertEqual(main.cli(["scan", "--dry-run", str(targets_file)]), 0)
+                self.assertEqual(main.cli(["scan", "-b", str(targets_file), "--dry-run"]), 0)
+
+                # Subcommand: config --validate, --get, --set (with rollback on invalid)
+                self.assertEqual(main.cli(["config", "--validate"]), 0)
+                self.assertEqual(main.cli(["config", "--get", "tools.mode"]), 0)
+                self.assertEqual(main.cli(["config", "--set", "modules.disabled=not_a_module"]), 1)
+                self.assertEqual(cfg.get("modules.disabled"), [])
+                with patch.object(cfg, "save"):
+                    self.assertEqual(main.cli(["config", "--set", "modules.disabled=ssl_tls,dns_security"]), 0)
+                self.assertEqual(cfg.get("modules.disabled"), ["ssl_tls", "dns_security"])
+
+                # Subcommand: report
+                sid = db.create_scan(cfg.data, 1, "test")
+                db.add_targets(sid, ["https://example.com/"])
+                db.set_target_status(sid, "https://example.com/", "done", score=100, requests=5)
+                db.finish_scan(sid, "complete")
+                self.assertEqual(main.cli(["report", sid, "--format", "json"]), 0)
+                self.assertTrue(list((tmp / "reports" / "json").glob("*.json")))
+            finally:
+                db.close()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

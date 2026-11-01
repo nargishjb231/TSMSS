@@ -479,66 +479,278 @@ def db_scans() -> list[list[str]]:
     return [[r["severity"] for r in db.findings(rows[0]["id"])]]
 
 
-def cli(argv: list[str]) -> int:
-    """Non-interactive entry point. Returns -1 to fall through to the menu."""
+def _ensure_bootstrap() -> None:
+    if RUNTIME.get("config") is None or RUNTIME.get("db") is None or RUNTIME.get("reports") is None:
+        bootstrap()
+
+
+def _add_scan_flags(parser: argparse.ArgumentParser, is_subcommand: bool = False) -> None:
+    if is_subcommand:
+        parser.add_argument("targets", nargs="*", help="target file path or URL(s)")
+        parser.add_argument("-d", "--dry-run", nargs="?", const=True, default=None, metavar="FILE",
+                            help="validate targets without scanning")
+    else:
+        parser.add_argument("-l", "--list", metavar="FILE", help="validate and print FILE, then exit")
+        parser.add_argument("-d", "--dry-run", metavar="FILE", help="validate FILE without scanning")
+    parser.add_argument("-b", "--batch", metavar="FILE", help="scan every URL in FILE, then exit")
+    parser.add_argument("-y", "--yes", action="store_true", help="skip the authorization prompt")
+    parser.add_argument("--no-reports", action="store_true", help="skip report generation")
+    parser.add_argument("--min-confidence", default="",
+                        choices=["", "CONFIRMED", "HIGH CONFIDENCE", "MEDIUM CONFIDENCE",
+                                 "LOW CONFIDENCE"],
+                        help="drop findings below this confidence")
+    parser.add_argument("--fail-on", default="", choices=["", "CRITICAL", "HIGH", "MEDIUM"],
+                        help="exit 2 when a finding at or above this severity exists")
+
+
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="main.py", description="TSMSS - authorized, non-destructive web security auditing.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Run with no arguments for the interactive menu.")
-    ap.add_argument("-b", "--batch", metavar="FILE", help="scan every URL in FILE, then exit")
-    ap.add_argument("-l", "--list", metavar="FILE", help="validate and print FILE, then exit")
-    ap.add_argument("-d", "--dry-run", metavar="FILE", help="validate FILE without scanning")
-    ap.add_argument("-y", "--yes", action="store_true", help="skip the authorization prompt")
-    ap.add_argument("--no-reports", action="store_true", help="skip report generation")
-    ap.add_argument("--min-confidence", default="",
-                    choices=["", "CONFIRMED", "HIGH CONFIDENCE", "MEDIUM CONFIDENCE",
-                             "LOW CONFIDENCE"],
-                    help="drop findings below this confidence")
-    ap.add_argument("--fail-on", default="", choices=["", "CRITICAL", "HIGH", "MEDIUM"],
-                    help="exit 2 when a finding at or above this severity exists")
-    args = ap.parse_args(argv)
+    _add_scan_flags(ap, is_subcommand=False)
 
-    source = args.list or args.dry_run or args.batch
-    if not source:
-        return -1
+    sub = ap.add_subparsers(dest="subcommand")
 
-    bootstrap()
+    p_scan = sub.add_parser("scan", help="run a scan against a target file or URL(s)")
+    _add_scan_flags(p_scan, is_subcommand=True)
+
+    p_list = sub.add_parser("list", help="validate and list targets from a file")
+    p_list.add_argument("file", nargs="?", default="", help="target file path")
+    p_list.add_argument("-l", "--list", dest="list_file", metavar="FILE", help="target file path")
+
+    p_report = sub.add_parser("report", help="generate reports for a scan ID")
+    p_report.add_argument("scan_id", nargs="?", default="latest",
+                          help="scan ID (defaults to 'latest')")
+    p_report.add_argument("-f", "--format", default="all",
+                          choices=["html", "json", "txt", "csv", "all"],
+                          help="report format to write")
+
+    p_config = sub.add_parser("config", help="inspect, validate or update settings")
+    p_config.add_argument("--show", action="store_true", help="print current settings")
+    p_config.add_argument("--validate", action="store_true", help="validate current settings")
+    p_config.add_argument("--get", metavar="KEY", help="print a single setting value")
+    p_config.add_argument("--set", action="append", default=[], metavar="KEY=VALUE",
+                          help="update a setting and save if valid")
+    return ap
+
+
+def _load_cli_targets(source: str | list[str]) -> tuple[list[str], list[dict], str] | None:
+    if isinstance(source, list):
+        if len(source) == 1 and Path(source[0]).exists():
+            source = source[0]
+        else:
+            urls, rejected, seen = [], [], set()
+            for idx, raw in enumerate(source, 1):
+                res = validate(raw)
+                if not res.valid:
+                    rejected.append({"line": idx, "raw": raw, "reason": res.reason})
+                elif res.normalized.lower() in seen:
+                    rejected.append({"line": idx, "raw": raw, "reason": "duplicate"})
+                else:
+                    seen.add(res.normalized.lower())
+                    urls.append(res.normalized)
+            return urls, rejected, "cli"
     try:
         urls, rejected = load_targets(source)
+        return urls, rejected, str(source)
     except FileNotFoundError as exc:
         console.print(f"[red]{exc}[/red]")
+        return None
+
+
+def _cmd_list(source: str) -> int:
+    _ensure_bootstrap()
+    loaded = _load_cli_targets(source)
+    if loaded is None:
+        return 1
+    urls, rejected, _ = loaded
+    _print_rejections(rejected)
+    if not urls:
+        console.print("[red]No valid targets.[/red]")
+        return 1
+    for i, u in enumerate(urls, 1):
+        console.print(f"{i:>3}. {u}")
+    console.print(f"[grey62]{len(urls)} valid, {len(rejected)} rejected[/grey62]")
+    return 0
+
+
+def _cmd_scan(args: argparse.Namespace) -> int:
+    dry_run_arg = getattr(args, "dry_run", None)
+    targets_pos = getattr(args, "targets", None) or []
+    source: str | list[str] | None = None
+    if isinstance(dry_run_arg, str) and dry_run_arg:
+        source = dry_run_arg
+    elif args.batch:
+        source = args.batch
+    elif targets_pos:
+        source = targets_pos
+    if not source:
+        console.print("[red]No target source specified.[/red]")
         return 1
 
+    _ensure_bootstrap()
+    loaded = _load_cli_targets(source)
+    if loaded is None:
+        return 1
+    urls, rejected, label = loaded
     _print_rejections(rejected)
     if not urls:
         console.print("[red]No valid targets.[/red]")
         return 1
 
-    if args.list:
-        for i, u in enumerate(urls, 1):
-            console.print(f"{i:>3}. {u}")
-        console.print(f"[grey62]{len(urls)} valid, {len(rejected)} rejected[/grey62]")
-        return 0
-
-    if args.dry_run:
+    if dry_run_arg:
         console.print(f"[green]{len(urls)} valid[/green], [yellow]{len(rejected)} rejected[/yellow]")
         return 0
 
-    console.print(f"[bold]{len(urls)}[/bold] target(s) from [cyan]{source}[/cyan]")
+    console.print(f"[bold]{len(urls)}[/bold] target(s) from [cyan]{label}[/cyan]")
     if not args.yes and not menu.confirm_authorization():
         console.print("[yellow]Authorization not confirmed.[/yellow]")
         return 1
 
     RUNTIME["config"].set("scan.min_confidence", args.min_confidence)
-    asyncio.run(run_scan(urls, f"batch:{source}", auto_reports=not args.no_reports))
+    asyncio.run(run_scan(urls, f"batch:{label}", auto_reports=not args.no_reports))
     if args.fail_on:
-        from config import SEVERITY_ORDER
         limit = SEVERITY_ORDER.index(args.fail_on)
         hits = [f for s in db_scans() for f in s if SEVERITY_ORDER.index(f) <= limit]
         if hits:
             console.print(f"[red]fail-on {args.fail_on}: {len(hits)} finding(s)[/red]")
             return 2
     return 0
+
+
+def _cmd_report(args: argparse.Namespace) -> int:
+    _ensure_bootstrap()
+    db: Database = RUNTIME["db"]
+    scan_id = args.scan_id
+    if not scan_id or scan_id == "latest":
+        recent = db.recent_scans(1)
+        if not recent:
+            console.print("[red]No scans in database.[/red]")
+            return 1
+        scan_id = recent[0]["id"]
+    meta, targets, by_target = _load_scan_rows(scan_id)
+    if meta is None:
+        return 1
+    fmt = args.format
+    if fmt == "all":
+        written = generate_reports(scan_id)
+    else:
+        all_rows = [f for v in by_target.values() for f in v]
+        reports = RUNTIME["reports"]
+        if fmt == "json":
+            written = {"json": str(reports.json_report(meta, targets, by_target))}
+        elif fmt == "txt":
+            written = {"txt": str(reports.txt_report(meta, targets, by_target))}
+        elif fmt == "csv":
+            written = {"csv": str(reports.csv_report(all_rows))}
+        else:
+            written = {"html": str(reports.html_report(meta, targets, by_target))}
+    for k, path in written.items():
+        console.print(f"[green]{k.upper()} report:[/green] {path}")
+    return 0
+
+
+def _coerce_setting_value(current, raw_val: str):
+    if isinstance(current, bool):
+        if raw_val.lower() in ("true", "1", "yes", "on"):
+            return True
+        if raw_val.lower() in ("false", "0", "no", "off"):
+            return False
+        raise ValueError(f"expected boolean, got {raw_val!r}")
+    if isinstance(current, int):
+        return int(raw_val)
+    if isinstance(current, float):
+        return float(raw_val)
+    if isinstance(current, list):
+        return _parse_list_setting(raw_val)
+    try:
+        return json.loads(raw_val)
+    except json.JSONDecodeError:
+        return raw_val
+
+
+def _cmd_config(args: argparse.Namespace) -> int:
+    _ensure_bootstrap()
+    config = RUNTIME["config"]
+    snapshot = config.snapshot()
+
+    if args.set:
+        for pair in args.set:
+            if "=" not in pair:
+                console.print(f"[red]Invalid --set {pair!r}; expected KEY=VALUE[/red]")
+                config.restore(snapshot)
+                return 1
+            key, raw_val = pair.split("=", 1)
+            key = key.strip()
+            current = config.get(key)
+            if current is None:
+                console.print(f"[red]Unknown key: {key}[/red]")
+                config.restore(snapshot)
+                return 1
+            try:
+                config.set(key, _coerce_setting_value(current, raw_val.strip()))
+            except ValueError as exc:
+                console.print(f"[red]Invalid value for {key}: {exc}[/red]")
+                config.restore(snapshot)
+                return 1
+        errs = config.validate()
+        if errs:
+            for e in errs:
+                console.print(f"[red]{e}[/red]")
+            config.restore(snapshot)
+            return 1
+        config.save()
+        console.print("[green]Saved.[/green]")
+
+    if args.get:
+        val = config.get(args.get)
+        if val is None:
+            console.print(f"[red]Unknown key: {args.get}[/red]")
+            return 1
+        console.print(json.dumps(val) if isinstance(val, (list, dict)) else str(val))
+        return 0
+
+    if args.validate:
+        errs = config.validate()
+        if errs:
+            for e in errs:
+                console.print(f"[red]{e}[/red]")
+            return 1
+        console.print("[green]Configuration valid.[/green]")
+        return 0
+
+    if args.show or not args.set:
+        table = Table("key", "value", title="Current settings", show_header=True)
+        for key in SETTINGS_KEYS:
+            table.add_row(key, str(config.get(key)))
+        console.print(table)
+    return 0
+
+
+def cli(argv: list[str]) -> int:
+    """Non-interactive entry point. Returns -1 to fall through to the menu."""
+    if not argv:
+        return -1
+    ap = build_parser()
+    args = ap.parse_args(argv)
+
+    if args.subcommand == "list":
+        src = args.list_file or args.file or "targets.txt"
+        return _cmd_list(src)
+    if args.subcommand == "scan":
+        return _cmd_scan(args)
+    if args.subcommand == "report":
+        return _cmd_report(args)
+    if args.subcommand == "config":
+        return _cmd_config(args)
+
+    # Top-level legacy flag compatibility
+    if getattr(args, "list", None):
+        return _cmd_list(args.list)
+    if getattr(args, "dry_run", None) or getattr(args, "batch", None):
+        return _cmd_scan(args)
+    return -1
 
 
 # ------------------------------------------------------------------- main
