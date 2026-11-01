@@ -225,3 +225,6 @@ database/*.db-*
 logs/*.log
 reports/
 config/settings.yaml
+
+# ad-hoc target lists
+.run/

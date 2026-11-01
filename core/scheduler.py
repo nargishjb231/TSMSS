@@ -63,7 +63,9 @@ class Scheduler:
                 self._report()
                 try:
                     result = await worker(url)
-                    ok = not result[2] if len(result) > 2 else True
+                    # worker returns an explicit ok flag at index 5; the grade
+                    # letter at index 2 is truthy either way, so it cannot be used
+                    ok = bool(result[5]) if len(result) > 5 else True
                 except asyncio.CancelledError:
                     self.state.skipped += 1
                     raise

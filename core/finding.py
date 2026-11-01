@@ -87,3 +87,23 @@ class Finding:
 
 def severity_rank(sev: str) -> int:
     return SEVERITY_ORDER.index(sev) if sev in SEVERITY_ORDER else 99
+
+
+# --- scoring: the single source of truth -------------------------------
+# Saturating deduction. A cap per severity stops a noisy target from
+# flooring the score at 0, while k controls how fast each class approaches
+# its cap, so repeats always cost less than first occurrences.
+_DEDUCTION_CAP = {"CRITICAL": 90.0, "HIGH": 25.0, "MEDIUM": 12.0, "LOW": 5.0, "INFO": 0.0}
+_DEDUCTION_K = {"CRITICAL": 3.0, "HIGH": 5.0, "MEDIUM": 8.0, "LOW": 15.0, "INFO": 1.0}
+
+
+def score_counts(counts: dict[str, int]) -> tuple[int, str]:
+    """Score a severity histogram. Used by the engine and by every report."""
+    deduction = sum(
+        _DEDUCTION_CAP[sev] * n / (n + _DEDUCTION_K[sev])
+        for sev, n in counts.items() if sev in _DEDUCTION_CAP and n
+    )
+    value = max(0, min(100, round(100 - deduction)))
+    grade = ("A" if value >= 90 else "B" if value >= 80 else "C" if value >= 65
+             else "D" if value >= 50 else "E" if value >= 30 else "F")
+    return value, grade

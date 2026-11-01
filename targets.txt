@@ -1,2 +1,98 @@
-# TSMSS targets - one authorized URL per line
-# https://example.com
+https://martsbd.com/
+‎https://www.digitalproductsbd.com/
+‎https://amarfriday.com/
+‎https://subsbhai.com/
+‎https://subscriptionsbd.net/
+‎https://www.techiyan.com/
+‎https://subscriptionsmartbd.com/
+‎https://www.fanflixbd.com/
+‎https://shop.bongodigitalbd.com/
+‎https://www.gameonbd.xyz/
+‎https://lkey.info/
+‎https://www.globalbrand.com.bd/
+‎https://www.amarhoster.com/
+‎https://tzssbd.com/
+‎https://nspbdtech.com/
+‎https://giftcardszonebd.com/
+‎https://ebdsolution.com/
+‎https://vertexbazaar.com/
+‎https://bornalibd.com/
+‎https://gamecastlebd.com/
+‎https://royalsubz.com/
+‎https://premiumbangladesh.com/
+‎https://www.thinkplusbd.com/
+‎https://streamybd.com/
+‎https://www.techiyan.com/
+‎https://ratersbd.com/
+‎https://thepremiumshopbd.com/
+‎https://nspbdtech.com/
+‎https://d5digital.net/
+‎https://www.zooinfotech.com/
+‎https://bdpremiumshop.com/
+‎https://bdproductscenter.com/# =====================================================================
+#  TSMSS TARGET LIST
+#  Replace each "# NN" marker with one authorized URL, e.g.
+#     https://example.com
+#     https://staging.example.com/login
+#  Unfilled slots are comments and are ignored. Blank lines are fine.
+# =====================================================================
+# 01 
+# 02 
+# 03 
+# 04 
+# 05 
+# 06 
+# 07 
+# 08 
+# 09 
+# 10 
+# 11 
+# 12 
+# 13 
+# 14 
+# 15 
+# 16 
+# 17 
+# 18 
+# 19 
+# 20 
+# 21 
+# 22 
+# 23 
+# 24 
+# 25 
+# 26 
+# 27 
+# 28 
+# 29 
+# 30 
+# 31 
+# 32 
+# 33 
+# 34 
+# 35 
+# 36 
+# 37 
+# 38 
+# 39 
+# 40 
+# 41 
+# 42 
+# 43 
+# 44 
+# 45 
+# 46 
+# 47 
+# 48 
+# 49 
+# 50 
+# 51 
+# 52 
+# 53 
+# 54 
+# 55 
+# 56 
+# 57 
+# 58 
+# 59 
+# 60 

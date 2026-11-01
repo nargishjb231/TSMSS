@@ -10,12 +10,14 @@ from pathlib import Path
 from string import Template
 
 from config import SEVERITY_ORDER, SEVERITY_WEIGHTS
-from core.finding import severity_rank
+from core.finding import score_counts, severity_rank
 
-SCORE_METHOD = """Security score = max(0, 100 - sum(weights)), weights:
-CRITICAL 25, HIGH 12, MEDIUM 5, LOW 2, INFO 0. Grades: A>=90, B>=80, C>=65,
-D>=50, E>=30, F<30. The score is a relative prioritisation aid, not a
-compliance verdict; absence of findings is not proof of security."""
+SCORE_METHOD = """Each severity contributes a saturating deduction
+cap * n / (n + k): CRITICAL cap 90 k 3, HIGH cap 25 k 5, MEDIUM cap 12 k 8,
+LOW cap 5 k 15, INFO 0. Score = max(0, 100 - total). Caps stop a noisy target
+from flooring at 0 while repeats still cost less than first occurrences.
+Grades: A>=90, B>=80, C>=65, D>=50, E>=30, F<30. A relative prioritisation
+aid, not a compliance verdict; absence of findings is not proof of security."""
 
 LIMITATIONS = [
     "Non-destructive black-box testing only; no authenticated crawling, exploitation, "
@@ -56,10 +58,7 @@ class ReportManager:
         counts = {s: 0 for s in SEVERITY_ORDER}
         for r in rows:
             counts[r["severity"]] = counts.get(r["severity"], 0) + 1
-        deduction = sum(SEVERITY_WEIGHTS.get(r["severity"], 0) for r in rows)
-        value = max(0, min(100, 100 - deduction))
-        grade = ("A" if value >= 90 else "B" if value >= 80 else "C" if value >= 65
-                 else "D" if value >= 50 else "E" if value >= 30 else "F")
+        value, grade = score_counts(counts)
         return {"counts": counts, "score": value, "grade": grade, "total": len(rows)}
 
     # ---- JSON ------------------------------------------------------------

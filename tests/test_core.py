@@ -24,6 +24,12 @@ class TestValidator(unittest.TestCase):
     def test_reject_space(self):
         self.assertFalse(validate("http://bad host.com").valid)
 
+    def test_strips_invisible_characters(self):
+        for junk in ("\u200e", "\u200b", "\ufeff", "\u00a0", "\u00ad", "\u200f"):
+            self.assertEqual(normalize(f"{junk}https://example.com/"),
+                             "https://example.com/", repr(junk))
+            self.assertTrue(validate(f"{junk}https://example.com/").valid, repr(junk))
+
     def test_dedupe(self):
         import tempfile
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as d:
@@ -67,10 +73,27 @@ class TestFindings(unittest.TestCase):
         f.downgrade_if_heuristic("missing_header")
         self.assertEqual(f.confidence, "CONFIRMED")
 
-    def test_score_floor(self):
-        rows = [Finding(target="t", category="c", title=str(i), severity="CRITICAL",
-                        description="d") for i in range(10)]
-        self.assertEqual(score(rows), (0, "F"))
+    @staticmethod
+    def _rows(sev, n):
+        return [Finding(target="t", category="c", title=str(i), severity=sev,
+                        description="d") for i in range(n)]
+
+    def test_clean_target_scores_perfect(self):
+        self.assertEqual(score([]), (100, "A"))
+
+    def test_score_is_monotonic(self):
+        self.assertGreater(score(self._rows("HIGH", 1))[0],
+                           score(self._rows("HIGH", 20))[0])
+
+    def test_severe_target_reaches_f(self):
+        value, grade = score(self._rows("CRITICAL", 50))
+        self.assertEqual(grade, "F")
+        self.assertGreaterEqual(value, 0)
+
+    def test_repeats_cost_less_than_first_occurrence(self):
+        first = 100 - score(self._rows("MEDIUM", 1))[0]
+        extra = score(self._rows("MEDIUM", 1))[0] - score(self._rows("MEDIUM", 10))[0]
+        self.assertLess(extra, first * 9)
 
     def test_severity_order(self):
         self.assertLess(severity_rank("CRITICAL"), severity_rank("LOW"))

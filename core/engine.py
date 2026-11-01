@@ -4,10 +4,11 @@ from __future__ import annotations
 import asyncio
 import time
 import traceback
+from collections import Counter
 
 from config import SEVERITY_WEIGHTS
 from core.context import ScanContext, Target
-from core.finding import Finding, severity_rank
+from core.finding import Finding, score_counts, severity_rank
 from core.logger import get
 
 log = get("tsmss.engine")
@@ -44,19 +45,8 @@ def build_modules(rules: dict) -> list:
 
 
 def score(findings: list[Finding]) -> tuple[int, str]:
-    deduction = sum(SEVERITY_WEIGHTS.get(f.severity, 0) for f in findings)
-    value = max(0, min(100, 100 - deduction))
-    if value >= 90:
-        return value, "A"
-    if value >= 80:
-        return value, "B"
-    if value >= 65:
-        return value, "C"
-    if value >= 50:
-        return value, "D"
-    if value >= 30:
-        return value, "E"
-    return value, "F"
+    """Thin wrapper over finding.score_counts, kept for existing callers."""
+    return score_counts(Counter(f.severity for f in findings))
 
 
 class TargetEngine:

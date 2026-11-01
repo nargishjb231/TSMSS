@@ -2,6 +2,7 @@
 """TSMSS entry point."""
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import signal
@@ -61,7 +62,7 @@ def make_http_factory(config, scope, limiter):
 
 
 # ------------------------------------------------------------------- scan
-async def run_scan(urls: list[str], note: str = "") -> None:
+async def run_scan(urls: list[str], note: str = "", auto_reports: bool = False) -> None:
     config = RUNTIME["config"]
     db: Database = RUNTIME["db"]
 
@@ -79,10 +80,14 @@ async def run_scan(urls: list[str], note: str = "") -> None:
     RUNTIME["scope"] = scope
 
     # scope admission check
-    admitted, blocked = [], []
+    admitted: list[str] = []
+    blocked: list[tuple[str, str]] = []
     for u in urls:
         decision = scope.check_target(u)
-        (admitted if decision.allowed else blocked).append((u, decision.reason))
+        if decision.allowed:
+            admitted.append(u)
+        else:
+            blocked.append((u, decision.reason))
     for u, reason in blocked:
         console.print(f"[yellow]skip[/yellow] {u} [grey50]({reason})[/grey50]")
     if not admitted:
@@ -117,13 +122,12 @@ async def run_scan(urls: list[str], note: str = "") -> None:
                 if f.evidence:
                     evidence.save(f.finding_id, f.evidence)
         db.add_findings(scan_id, findings)
-        return url, findings, extra, "", requests
+        ok = isinstance(extra, str) and extra in tuple("ABCDEF")
+        return url, findings, extra, "", requests, ok
 
     async def on_done(url: str, result: tuple) -> None:
-        _, findings, extra, error, requests = result
-        # `extra` carries a grade letter on success, an error string on failure
-        grade_like = isinstance(extra, str) and extra in tuple("ABCDEF")
-        status = "done" if grade_like else "failed"
+        _, findings, extra, error, requests, ok = result
+        status = "done" if ok else "failed"
         value, _ = score(findings)
         db.set_target_status(scan_id, url, status, error=None if status == "done" else str(extra),
                              score=value, requests=requests)
@@ -143,6 +147,9 @@ async def run_scan(urls: list[str], note: str = "") -> None:
         except asyncio.CancelledError:
             pass
         live.update(dashboard.render(scheduler.state, counters, scan_id))
+
+    if scheduler.state.completed == 0 and scheduler.state.failed > 0:
+        console.print("[yellow]every target failed - check network and scope[/yellow]")
 
     status = "interrupted" if stop_event.is_set() else "complete"
     db.finish_scan(scan_id, status)
@@ -166,7 +173,11 @@ async def run_scan(urls: list[str], note: str = "") -> None:
         f"Findings: {menu.severity_bar(dict(counters))}\n"
         f"Score {overall}/100 (grade {grade})  Duration {scheduler.state.elapsed}s",
         border_style="green" if status == "complete" else "yellow"))
-    console.print(f"[grey62]Reports: {BASE / 'reports'}[/grey62]")
+    if auto_reports:
+        for fmt, path in generate_reports(scan_id).items():
+            console.print(f"[green]{fmt.upper()} report:[/green] {path}")
+    else:
+        console.print(f"[grey62]Reports: {BASE / 'reports'}[/grey62]")
 
     if config.get("safety.notify_on_complete", True):
         await tap.notify("TSMSS scan finished",
@@ -314,6 +325,21 @@ def _load_scan_rows(scan_id: str):
     return meta, targets, by_target
 
 
+def generate_reports(scan_id: str) -> dict[str, str]:
+    """Render every format for a finished scan and return the written paths."""
+    meta, targets, by_target = _load_scan_rows(scan_id)
+    if meta is None:
+        return {}
+    all_rows = [f for rows in by_target.values() for f in rows]
+    reports = RUNTIME["reports"]
+    return {
+        "html": str(reports.html_report(meta, targets, by_target)),
+        "json": str(reports.json_report(meta, targets, by_target)),
+        "txt": str(reports.txt_report(meta, targets, by_target)),
+        "csv": str(reports.csv_report(all_rows)),
+    }
+
+
 def handle_report(fmt: str) -> None:
     scan_id = menu.ask("Scan ID")
     meta, targets, by_target = _load_scan_rows(scan_id)
@@ -391,8 +417,72 @@ HANDLERS = {
 }
 
 
+# ------------------------------------------------------------------- cli
+def _print_rejections(rejected: list[dict]) -> None:
+    if not rejected:
+        return
+    table = Table("line", "value", "reason")
+    for r in rejected[:15]:
+        table.add_row(str(r["line"]), r["raw"][:50], r["reason"])
+    console.print(table)
+    if len(rejected) > 15:
+        console.print(f"[grey62]... and {len(rejected) - 15} more[/grey62]")
+
+
+def cli(argv: list[str]) -> int:
+    """Non-interactive entry point. Returns -1 to fall through to the menu."""
+    ap = argparse.ArgumentParser(
+        prog="main.py", description="TSMSS - authorized, non-destructive web security auditing.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Run with no arguments for the interactive menu.")
+    ap.add_argument("-b", "--batch", metavar="FILE", help="scan every URL in FILE, then exit")
+    ap.add_argument("-l", "--list", metavar="FILE", help="validate and print FILE, then exit")
+    ap.add_argument("-d", "--dry-run", metavar="FILE", help="validate FILE without scanning")
+    ap.add_argument("-y", "--yes", action="store_true", help="skip the authorization prompt")
+    ap.add_argument("--no-reports", action="store_true", help="skip report generation")
+    args = ap.parse_args(argv)
+
+    source = args.list or args.dry_run or args.batch
+    if not source:
+        return -1
+
+    bootstrap()
+    try:
+        urls, rejected = load_targets(source)
+    except FileNotFoundError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+
+    _print_rejections(rejected)
+    if not urls:
+        console.print("[red]No valid targets.[/red]")
+        return 1
+
+    if args.list:
+        for i, u in enumerate(urls, 1):
+            console.print(f"{i:>3}. {u}")
+        console.print(f"[grey62]{len(urls)} valid, {len(rejected)} rejected[/grey62]")
+        return 0
+
+    if args.dry_run:
+        console.print(f"[green]{len(urls)} valid[/green], [yellow]{len(rejected)} rejected[/yellow]")
+        return 0
+
+    console.print(f"[bold]{len(urls)}[/bold] target(s) from [cyan]{source}[/cyan]")
+    if not args.yes and not menu.confirm_authorization():
+        console.print("[yellow]Authorization not confirmed.[/yellow]")
+        return 1
+
+    asyncio.run(run_scan(urls, f"batch:{source}", auto_reports=not args.no_reports))
+    return 0
+
+
 # ------------------------------------------------------------------- main
 def main() -> int:
+    if sys.argv[1:]:
+        rc = cli(sys.argv[1:])
+        if rc >= 0:
+            return rc
     bootstrap()
     menu.banner()
     while True:

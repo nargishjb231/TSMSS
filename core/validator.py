@@ -17,8 +17,18 @@ class ValidationResult:
     normalized: str = ""
 
 
+# Invisible characters that survive copy-paste from browsers, chat apps and
+# PDFs. They are not whitespace, so .strip() alone will not remove them.
+_INVISIBLE = str.maketrans("", "", "\u200b\u200c\u200d\u200e\u200f\u2060"
+                                 "\ufeff\u00a0\u2028\u2029\u00ad")
+
+
+def _clean(raw: str) -> str:
+    return (raw or "").translate(_INVISIBLE)
+
+
 def normalize(raw: str) -> str:
-    s = (raw or "").strip()
+    s = _clean(raw).strip()
     if not s or s.startswith("#"):
         return ""
     if "#" in s:
@@ -41,7 +51,8 @@ def normalize(raw: str) -> str:
 
 
 def validate(raw: str) -> ValidationResult:
-    if not (raw or "").strip():
+    raw = _clean(raw)
+    if not raw.strip():
         return ValidationResult(raw, False, "empty line")
     if (raw or "").strip().startswith("#"):
         return ValidationResult(raw, False, "comment")
@@ -60,7 +71,7 @@ def validate(raw: str) -> ValidationResult:
     if " " in host:
         return ValidationResult(raw, False, "space in host")
     if not _HOST_RE.match(host) and not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
-        return ValidationResult(raw, False, f"invalid hostname '{host}'")
+        return ValidationResult(raw, False, f"invalid hostname {host!r}")
     if len(norm) > 2048:
         return ValidationResult(raw, False, "url too long")
     return ValidationResult(raw, True, "", norm)
