@@ -37,9 +37,11 @@ class HttpSecurityModule(BaseModule):
         out: list = []
         base = await ctx.http.request("GET", ctx.target.url, allow_redirects=True)
         if not base.ok and base.status == 0:
+            ctx.http_unreachable = base.error or "HTTP origin unreachable"
             return out
         ctx.homepage = base
         out += await self._headers(ctx, base)
+        out += await self._xcto(ctx, base)
         out += await self._transport(ctx, base)
         out += await self._disclosure(ctx, base)
         out += await self._methods(ctx)
@@ -85,10 +87,14 @@ class HttpSecurityModule(BaseModule):
 
     async def _transport(self, ctx, resp):
         out = []
+        disabled = set(ctx.config.get("modules.disabled", []) or [])
+        tls_enabled = "ssl_tls" not in disabled
         if ctx.target.scheme == "http":
+            if not tls_enabled:
+                return out
             secure = await ctx.http.request("GET", ctx.target.https_url, retry=False)
             if secure.ok and secure.status and secure.status < 400:
-                final = secure.final_url or secure.url
+                final = resp.final_url or resp.url
                 if final.lower().startswith("http://"):
                     out.append(self.make(
                         ctx, title="HTTPS available but no redirect from HTTP",
@@ -114,9 +120,13 @@ class HttpSecurityModule(BaseModule):
                 p = await ctx.http.request("GET", plain, retry=False)
             except Exception:
                 p = None
-            landed_https = (p and p.ok and p.status < 400
-                            and (p.final_url or p.url).startswith("https://"))
-            redirected = bool(p and p.hops)
+            loc = p.header("location") if p else ""
+            landed_https = bool(
+                p and p.ok and p.status < 400
+                and ((p.final_url or p.url).startswith("https://")
+                     or (p.status in (301, 302, 303, 307, 308) and loc.lower().startswith("https://")))
+            )
+            redirected = bool(p and (p.hops or p.status in (301, 302, 303, 307, 308)))
             if p and p.ok and p.status < 400 and not landed_https and not redirected:
                 out.append(self.make(
                     ctx, title="HTTP origin reachable without redirect to HTTPS",

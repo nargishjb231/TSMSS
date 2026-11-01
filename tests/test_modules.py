@@ -169,6 +169,25 @@ class TestFixture(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(any("redirect" in f.title.lower() for f in out))
             await ctx.http.aclose()
 
+    async def test_https_probe_gated_on_ssl_tls_module(self):
+        with Fixture() as url:
+            cfg = self.cfg()
+            cfg.set("modules.disabled", ["ssl_tls"])
+            ctx = make_ctx(url, cfg)
+            requested_urls = []
+            orig_request = ctx.http.request
+
+            async def tracking_request(method, u, **kw):
+                requested_urls.append(u)
+                return await orig_request(method, u, **kw)
+
+            ctx.http.request = tracking_request
+            out = await http_security.HttpSecurityModule({}).run(ctx)
+            self.assertFalse(any(u.startswith("https://") for u in requested_urls),
+                             f"unexpected https probe when ssl_tls disabled: {requested_urls}")
+            self.assertFalse(any("HTTPS" in f.title for f in out))
+            await ctx.http.aclose()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

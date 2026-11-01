@@ -106,6 +106,8 @@ class TargetEngine:
         findings = _dedupe(findings, self.config.get("scan.min_confidence", ""))
         findings.sort(key=lambda f: (severity_rank(f.severity), f.title))
         value, grade = score(findings)
+        if not error and not findings and getattr(ctx, "http_unreachable", ""):
+            error = getattr(ctx, "http_unreachable")
         ctx_grade = grade
         elapsed = int(time.monotonic() - started)
         return findings, value, error or ctx_grade, counter["requests"]
@@ -114,6 +116,8 @@ class TargetEngine:
         for module in self.modules:
             if ctx.stop_event.is_set():
                 return
+            if getattr(ctx, "http_unreachable", "") and getattr(module, "needs_http", True):
+                continue
             try:
                 result = await asyncio.wait_for(module.run(ctx), timeout=timeout)
             except asyncio.TimeoutError:
