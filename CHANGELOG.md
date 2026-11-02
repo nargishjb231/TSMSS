@@ -36,3 +36,8 @@
 - Added strict value validation for `X-Frame-Options` (`DENY` | `SAMEORIGIN`), `Strict-Transport-Security` (`max-age=0` -> `MEDIUM`, `0 < max-age < 15552000` -> `LOW`, missing `max-age` -> `MEDIUM`), `X-Content-Type-Options` (`nosniff`), and `Referrer-Policy` (W3C token set).
 - Added CSP directive syntax parser detecting comma-separated directives (`frame-ancestors 'self', upgrade-insecure-requests`) as `MEDIUM` `"Malformed Content-Security-Policy (comma-separated directives)"`.
 - Enforced mutual exclusion so duplicate or invalid headers never also emit a separate `"missing header"` or clickjacking finding.
+
+### Item G — Cookie severity calibration, CSRF HttpOnly exemption, and `__Host-` / `__Secure-` validation
+- Added `HTTPONLY_EXEMPT = {"xsrf-token", "csrf_token", "x-csrf-token", "_csrf"}` in `modules/cookies.py` so intentionally JS-readable CSRF cookies do not trigger missing `HttpOnly` findings.
+- Standardized session-like cookie regex `(?i)(session|sess_id|auth|token|jwt|sid|connect\.sid|phpsessid|jsessionid)`: missing `Secure` -> `MEDIUM`, missing `HttpOnly` -> `MEDIUM`, missing `SameSite` -> `LOW`.
+- Enforced `__Host-` (`Secure` + `Path=/` + no `Domain`) and `__Secure-` (`Secure`) prefix requirements (`MEDIUM` on violation), and removed noisy session-expiry inventory findings so compliant cookie sets (`ffdiamondbd.com`, `codmshopbd.com`) produce `0` findings.

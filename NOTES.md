@@ -52,3 +52,12 @@
   3. Split `Content-Security-Policy` on `';'` (`F3`) and flag any directive containing `','` as `MEDIUM` `"Malformed Content-Security-Policy (comma-separated directives)"`.
   4. Never emit both `"missing header"` (or missing-XFO clickjacking) and `"duplicate invalid"` for the same header (`F4`).
 - **Tradeoff**: None; RFC/W3C grammar violations and duplicate single-value headers are deterministically detected from already-fetched response headers.
+
+## Item G — Cookie Severity Calibration & CSRF Exemption
+- **Root Cause**: Laravel's `XSRF-TOKEN` cookie (intentionally readable by JavaScript so Axios/Angular can echo it in `X-XSRF-TOKEN`) was flagged `MEDIUM` for missing `HttpOnly`, and every session cookie without `Max-Age`/`Expires` emitted a noisy `INFO` finding even when all security flags (`Secure`, `HttpOnly`, `SameSite=Lax`) were properly set.
+- **Detection Decision**:
+  1. Exempt `HTTPONLY_EXEMPT = {"xsrf-token", "csrf_token", "x-csrf-token", "_csrf"}` from `HttpOnly` checks (`G1`).
+  2. Match session-like cookies via `(?i)(session|sess_id|auth|token|jwt|sid|connect\.sid|phpsessid|jsessionid)` (`G2`): missing `Secure` -> `MEDIUM`, missing `HttpOnly` -> `MEDIUM`, missing `SameSite` -> `LOW`.
+  3. Enforce `__Host-` (`Secure` + `Path=/` + no `Domain`) and `__Secure-` (`Secure`) prefixes at `MEDIUM` severity (`G3`).
+  4. Suppress `0`-issue session-cookie inventory noise so properly configured cookie sets (`ffdiamondbd_cookies.txt`, `codmshopbd_cookies.txt`) emit `0` findings (`G4`).
+- **Tradeoff**: Custom applications that store session JWTs inside a cookie named `XSRF-TOKEN` would not be flagged for missing `HttpOnly`, which is standard double-submit CSRF design.
