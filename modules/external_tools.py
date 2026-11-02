@@ -15,7 +15,7 @@ class ExternalToolsModule(BaseModule):
     async def run(self, ctx):
         if ctx.config.get("tools.mode", "auto") == "off":
             return []
-        runner = ToolRunner(ctx.config, ctx.target, ctx.evidence)
+        runner = ToolRunner(ctx.config, ctx.target, ctx.evidence, ctx=ctx)
         specs = runner.select()
         if not specs:
             return []
@@ -29,15 +29,6 @@ class ExternalToolsModule(BaseModule):
                     break
                 found = await runner.run(spec)
                 out += found
-                if found:
-                    out.append(self.make(
-                        ctx, title=f"{spec.id} reported {len(found)} item(s)",
-                        severity=INFO, detection_method=f"external tool {spec.id}",
-                        confidence=HIGH_CONF,
-                        description=f"{spec.id} finished and produced {len(found)} parsed item(s).",
-                        evidence="\n".join(f.title for f in found[:15]),
-                        remediation=f"Review the {spec.id} output below.",
-                        tags=["external", spec.id]))
         finally:
             runner.cleanup()
         return out

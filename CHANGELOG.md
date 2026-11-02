@@ -41,3 +41,9 @@
 - Added `HTTPONLY_EXEMPT = {"xsrf-token", "csrf_token", "x-csrf-token", "_csrf"}` in `modules/cookies.py` so intentionally JS-readable CSRF cookies do not trigger missing `HttpOnly` findings.
 - Standardized session-like cookie regex `(?i)(session|sess_id|auth|token|jwt|sid|connect\.sid|phpsessid|jsessionid)`: missing `Secure` -> `MEDIUM`, missing `HttpOnly` -> `MEDIUM`, missing `SameSite` -> `LOW`.
 - Enforced `__Host-` (`Secure` + `Path=/` + no `Domain`) and `__Secure-` (`Secure`) prefix requirements (`MEDIUM` on violation), and removed noisy session-expiry inventory findings so compliant cookie sets (`ffdiamondbd.com`, `codmshopbd.com`) produce `0` findings.
+
+### Item H — Tool-output parsers (`wafw00f`, `arjun`, `ffuf`, and global ANSI stripping)
+- Added `strip_ansi()` (`re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", text)`) applied to all external tool output before parsing in `core/tool_runner.py`.
+- Added `parse_wafw00f_output()` keeping only `^\[\+\].*behind.*WAF` (1 finding) or `^\[-\].*No WAF` (1 `INFO` `"no WAF"` finding) and dropping all ASCII banner lines.
+- Added `parse_arjun_output()` dropping `Progress` status lines and keeping only `^\[\+\].*[A-Za-z0-9_-]+$`.
+- Added `parse_ffuf_output()` parsing the JSON `results[]` array into `<path> [<status>]` findings with `url`, `status`, `length`, and `words`, stripping `commandline`/local temp paths, and cross-deduping against `ctx.seen_paths`.

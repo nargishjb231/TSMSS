@@ -61,3 +61,12 @@
   3. Enforce `__Host-` (`Secure` + `Path=/` + no `Domain`) and `__Secure-` (`Secure`) prefixes at `MEDIUM` severity (`G3`).
   4. Suppress `0`-issue session-cookie inventory noise so properly configured cookie sets (`ffdiamondbd_cookies.txt`, `codmshopbd_cookies.txt`) emit `0` findings (`G4`).
 - **Tradeoff**: Custom applications that store session JWTs inside a cookie named `XSRF-TOKEN` would not be flagged for missing `HttpOnly`, which is standard double-submit CSRF design.
+
+## Item H — External Tool Output Parsers (`wafw00f`, `arjun`, `ffuf`) & ANSI Stripping
+- **Root Cause**: Line-mode tool parsing previously emitted every `wafw00f` ASCII banner line (20 findings per target) with raw `\x1b[...` ANSI escape sequences, parsed `arjun`'s `[!] Progress: 36%` terminal updates as discovered parameters, and dumped `ffuf`'s top-level JSON wrapper (including `commandline` and local temp file paths) as a single blob.
+- **Detection Decision**:
+  1. Strip ANSI escape codes (`\x1b\[[0-9;]*[a-zA-Z]`) globally prior to parsing any tool output (`H1`).
+  2. Parse `wafw00f` via `^\[\+\].*behind.*WAF` (1 finding) or `^\[-\].*No WAF` (1 `INFO` `"no WAF"`), discarding all ASCII art (`H2`).
+  3. Filter `arjun` lines to drop any line containing `Progress` and match `^\[\+\].*[A-Za-z0-9_-]+$` (`H3`).
+  4. Parse `ffuf` `results[]` JSON entries into `<path> [<status>]` findings with `{url, status, length, words}`, dropping `commandline`/temp paths and deduplicating against `ctx.seen_paths` (`H4`).
+- **Tradeoff**: Non-standard custom forks of `wafw00f` or `arjun` that change their `[+]`/`[-]` output prefix will be ignored rather than emitting raw unparsed stdout lines.
