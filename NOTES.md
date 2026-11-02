@@ -17,3 +17,12 @@
   4. Fingerprint SPA shells (`data-capo`, `__next_f`, `__NUXT__`, `id="app"`, `id="root"`) so all path probes on SPA hosts default to `INFO` unless their specific content signature matches.
   5. When the 3 calibration probes vary by `>25%` in length (`soft404_calibration=unstable`), downgrade verified path findings by one severity level.
 - **Tradeoff**: Adds 3 lightweight calibration GET requests per host (disableable via `--no-soft404`) and requires real content signatures for exposure findings, eliminating SPA catch-all false positives at the cost of ignoring custom/redacted backup files that lack standard format headers.
+
+## Item C — Context-Aware XSS & Two-Payload Agreement
+- **Root Cause**: Next.js RSC flight payloads (`self.__next_f.push([1,"..."])`) serialize route query parameters inside JavaScript string literals with unicode escapes (`\u003e\u003cb\u003eZZ\u003c/b\u003e`), or URL-encoded strings that `urllib.parse.unquote()` previously decoded into raw `<b...>` tags before context inspection, causing 27 false-positive `HIGH` / `CONFIRMED` XSS findings across 6 hosts.
+- **Detection Decision**:
+  1. Never call `urllib.parse.unquote()` on the response body before checking tag survival (`C3`).
+  2. Walk back up to 400 characters (and verify `<script>` enclosure) to classify reflections into `MARKUP | ATTR_SINGLE | ATTR_DOUBLE | ATTR_UNQUOTED | JS_STRING | JSON | COMMENT | TEXT` (`C1`, `C2`).
+  3. Apply a single global severity/confidence matrix (`C4`): `JS_STRING`/`JSON` reflections with `\u003c` or `\"` are `INFO` / `NEEDS MANUAL VERIFICATION` (promoted to `MEDIUM` / `NEEDS MANUAL VERIFICATION` only if unescaped and paired with an explicit DOM sink like `dangerouslySetInnerHTML`, `innerHTML=`, `document.write(`, `v-html=`, or `{!!`).
+  4. Require two-payload agreement (`C5`) with an independent 10-char random token before promoting any `MARKUP` reflection to `HIGH` / `CONFIRMED`.
+- **Tradeoff**: Requires 1 extra HTTP GET request per genuine `MARKUP` reflection to confirm two-payload agreement, and demotes reflections inside `<script>` blocks without visible DOM sinks to `INFO` (`NEEDS MANUAL VERIFICATION`).
