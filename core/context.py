@@ -80,6 +80,7 @@ class ScanContext:
     seen_paths: set = field(default_factory=set)
     edge_challenged: bool = False
     edge_banner: str = ""
+    topology: str = ""
     scan_target: str = ""
     origin_hidden: bool = False
     resolved_ips: list = field(default_factory=list)

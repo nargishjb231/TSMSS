@@ -59,6 +59,8 @@ class InfrastructureModule(BaseModule):
         return out
 
     def _cdn(self, ctx, resp):
+        if getattr(ctx, "topology", "") == "CF_DNS_ONLY":
+            return []
         blob = (resp.body[:200_000] + " " + " ".join(f"{k}:{v}" for k, v in resp.headers.items())).lower()
         for name, sigs in CDN_SIGNS.items():
             if any(s in blob for s in sigs):
@@ -93,8 +95,9 @@ class InfrastructureModule(BaseModule):
             return []
         ports = ctx.config.get("infra.nmap_ports", "80,443")
         timeout = ctx.config.get("infra.nmap_host_timeout", "90s")
+        scan_host = getattr(ctx, "scan_target", "") or ctx.target.host
         cmd = ["nmap", "-sT", "--unprivileged", "-Pn", "-n", "--open",
-               "-p", ports, "--host-timeout", timeout, ctx.target.host]
+               "-p", ports, "--host-timeout", timeout, scan_host]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)

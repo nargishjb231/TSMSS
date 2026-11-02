@@ -63,3 +63,8 @@
 - Updated `modules/headers.py` and `core/report_manager.py` to emit the response header block once per target under the target heading while individual header findings reference the header name only.
 - Added `schema_version`, `confidence`, `cwe`, `cvss`, `evidence_hash`, `first_seen`, `last_seen`, `edge`, and `check_outcome` to every JSON finding object.
 - Added per-target `"Verification"` sections in Markdown reports splitting machine-confirmed findings from `NEEDS MANUAL VERIFICATION`.
+
+### Item L — DNS topology & origin-exposure detector (`dns/topology.py`)
+- Added `dns/topology.py` (with `dnspython` package bridge in `dns/__init__.py`) maintaining Cloudflare IPv4/IPv6 CIDR networks and classifying targets into `CF_PROXIED`, `CF_DNS_ONLY`, or `DIRECT`.
+- When `CF_DNS_ONLY` (Cloudflare `NS` + non-Cloudflare `A`/`AAAA`), emit `MEDIUM` `"Origin IP exposed behind Cloudflare (proxy bypassed)"`, set `scan_target = origin_ip`, and emit `"Cloudflare DNS only - no WAF in path"` (`INFO`) while suppressing false Cloudflare WAF detections.
+- When `>=2` `A` records resolve across distinct `/16` networks outside a single CDN anycast, emit `LOW` `"Multiple A records in distinct networks, possible split origin or dangling record"`.

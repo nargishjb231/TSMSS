@@ -6,6 +6,7 @@ import re
 
 from core import resolver as R
 from core.finding import CONFIRMED, HIGH_CONF, CRITICAL, HIGH, INFO, LOW, MEDIUM, NEEDS_MANUAL
+from dns.topology import analyze_topology
 from modules.base import BaseModule
 
 TAKEOVER_FINGERPRINTS = {
@@ -126,6 +127,24 @@ class DnsSecurityModule(BaseModule):
                 evidence=f"A={records['A']} AAAA={records['AAAA']}",
                 detection_method="DNS resolution", confidence=CONFIRMED,
                 remediation="Verify the DNS zone.", tags=["dns"]))
+        else:
+            ns_vals = list(records.get("NS") or [])
+            if not ns_vals:
+                apex = await self._apex(r, host)
+                ns_vals = await R.query(r, apex, "NS")
+                records["NS"] = ns_vals
+            topo = analyze_topology(
+                ns_vals,
+                records.get("A") or [],
+                records.get("AAAA") or [],
+                target_url=ctx.target.url,
+                host=host,
+            )
+            ctx.topology = topo.classification
+            ctx.origin_hidden = topo.origin_hidden
+            ctx.scan_target = topo.scan_target
+            ctx.resolved_ips = list((records.get("A") or []) + (records.get("AAAA") or []))
+            out.extend(topo.findings)
         ctx.dns_records = records
         return records
 

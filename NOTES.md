@@ -95,3 +95,12 @@
   3. Include `schema_version`, `confidence`, `cwe`, `cvss`, `evidence_hash`, `first_seen`, `last_seen`, `edge`, and `check_outcome` on every JSON finding (`K3`).
   4. Render per-target `"Verification"` sections separating machine-confirmed findings from `NEEDS MANUAL VERIFICATION` (`K4`).
 - **Tradeoff**: Individual missing-header finding snippets show the absent header name rather than duplicating the entire 30-line HTTP response header block on every card.
+
+## Item L — DNS Topology, Grey-Cloud Origin Exposure & Split-Origin Detection
+- **Root Cause**: 4 targets (`ffdiamondbd.com`, `codmshopbd.com`, `bdtopupcenter.com`, `vertexbazaar.com`) used Cloudflare nameservers (`*.ns.cloudflare.com`) while their `A` records pointed directly to Hostinger/LiteSpeed/Contabo origin IPs (grey-clouded `CF_DNS_ONLY`). The scanner missed the origin exposure and falsely reported `"WAF detected: Cloudflare"`. Two other targets had dual `A` records across distinct `/16` networks (`185.199.108.153` GitHub Pages + `109.106.255.79` Hostinger).
+- **Detection Decision**:
+  1. Match `A`/`AAAA` records against Cloudflare's IPv4/IPv6 CIDR blocks (`dns/topology.py`, `L1`).
+  2. Classify targets into `CF_PROXIED` (`*.ns.cloudflare.com` + all IPs in CF CIDRs), `CF_DNS_ONLY` (`*.ns.cloudflare.com` + any IP outside CF CIDRs), or `DIRECT` (`L2`).
+  3. On `CF_DNS_ONLY`, emit `MEDIUM` `"Origin IP exposed behind Cloudflare (proxy bypassed)"`, set `scan_target = origin_ip` (`L3`), and emit `"Cloudflare DNS only - no WAF in path"` instead of `"WAF detected: Cloudflare"` (`L4`).
+  4. When `>=2` `A` records lie in different `/16` networks (and are not all inside Cloudflare anycast), emit `LOW` `"Multiple A records in distinct networks, possible split origin or dangling record"` (`L5`).
+- **Tradeoff**: Requires maintaining Cloudflare's published CIDR list in `dns/topology.py` (which changes very rarely).
