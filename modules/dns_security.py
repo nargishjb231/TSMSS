@@ -125,6 +125,39 @@ def evaluate_wildcard_dns(
     return False, True, set(), []
 
 
+def parse_dmarc_tags(record: str) -> dict[str, str]:
+    """N5: Parse DMARC tag=value pairs (`p`, `sp`, `pct`, `adkim`, `aspf`, `rua`, `ruf`)."""
+    tags: dict[str, str] = {}
+    for part in (record or "").split(";"):
+        part = part.strip()
+        if "=" in part:
+            k, v = part.split("=", 1)
+            tags[k.strip().lower()] = v.strip()
+    return tags
+
+
+def extract_dmarc_report_domains(uri_list: str) -> list[str]:
+    """Extract target domains from `rua=` / `ruf=` mailto: URIs."""
+    domains: list[str] = []
+    for item in (uri_list or "").split(","):
+        item = item.strip()
+        if "@" in item:
+            dom = item.rsplit("@", 1)[1].split("!", 1)[0].strip().lower().rstrip(".")
+            if dom and dom not in domains:
+                domains.append(dom)
+    return domains
+
+
+def parse_mx_entry(raw_mx: str) -> tuple[int | None, str]:
+    """Parse an MX string like `'0 _dc-mx.abc.example.com.'` or `'mail.example.com'` into `(priority, host)`."""
+    parts = (raw_mx or "").strip().split()
+    if len(parts) >= 2 and parts[0].isdigit():
+        return int(parts[0]), parts[1].strip().lower().rstrip(".")
+    if parts:
+        return None, parts[-1].strip().lower().rstrip(".")
+    return None, ""
+
+
 class DnsSecurityModule(BaseModule):
     name = "dns_security"
     category = "DNS Security"
@@ -188,13 +221,61 @@ class DnsSecurityModule(BaseModule):
 
     async def _mail_auth(self, r, ctx, host, records, out):
         apex = await self._apex(r, host)
+        registrable = ctx.target.registrable.lower()
         txt = await R.query(r, apex, "TXT")
         spf = [t for t in txt if t.lower().startswith("v=spf1")]
         ctx.dns_records["TXT"] = txt
 
-        if not records["MX"] and not spf:
-            return
-        if not spf:
+        # N4: MX priority 0 outside registrable domain or synthetic Cloudflare _dc-mx.*
+        for raw_mx in records.get("MX") or []:
+            prio, mx_host = parse_mx_entry(raw_mx)
+            if not mx_host:
+                continue
+            if mx_host.startswith("_dc-mx.") or "._dc-mx." in mx_host:
+                out.append(self.make(
+                    ctx,
+                    title="Cloudflare synthetic _dc-mx MX record exposes origin IP risk",
+                    severity=LOW,
+                    cwe="CWE-200",
+                    description=(
+                        f"MX points to Cloudflare synthetic record '{mx_host}', which resolves directly "
+                        "to the unproxied mail/origin IP address."
+                    ),
+                    evidence=f"MX: {raw_mx}",
+                    detection_method="MX record inspection",
+                    confidence=CONFIRMED,
+                    remediation="Host mail on a separate server IP from the web origin.",
+                    tags=["dns", "email", "mx", "origin-exposure"],
+                ))
+            elif prio == 0 and not (mx_host == registrable or mx_host.endswith("." + registrable)):
+                out.append(self.make(
+                    ctx,
+                    title="MX priority 0 points outside registrable domain",
+                    severity=LOW,
+                    cwe="CWE-200",
+                    description=f"Primary MX (priority 0) routes mail to external domain '{mx_host}'.",
+                    evidence=f"MX: {raw_mx} (registrable={registrable})",
+                    detection_method="MX record inspection",
+                    confidence=CONFIRMED,
+                    remediation="Verify external mail provider authorization and SPF alignment.",
+                    tags=["dns", "email", "mx"],
+                ))
+
+        # N6: Domain has no MX AND no SPF -> MEDIUM "Domain sends no mail, spoofable"
+        if not records.get("MX") and not spf:
+            out.append(self.make(
+                ctx,
+                title="Domain sends no mail, spoofable",
+                severity=MEDIUM,
+                cwe="CWE-290",
+                description="The domain publishes neither MX nor SPF records, leaving it open to spoofed email.",
+                evidence=f"MX={records.get('MX')} TXT={txt or '(empty)'}",
+                detection_method="MX + SPF absence check",
+                confidence=CONFIRMED,
+                remediation="v=spf1 -all",
+                tags=["dns", "email", "spoofing"],
+            ))
+        elif not spf:
             out.append(self.make(
                 ctx, title="No SPF record published",
                 severity=MEDIUM, cwe="CWE-290",
@@ -222,11 +303,12 @@ class DnsSecurityModule(BaseModule):
                     evidence=policy, detection_method="SPF policy parsing",
                     confidence=CONFIRMED, remediation="Replace ?all with -all.",
                     tags=["dns", "email"]))
+            # N1: >1 v=spf1 TXT -> MEDIUM "Multiple SPF records, RFC 7208 invalid"
             if len(spf) > 1:
                 out.append(self.make(
-                    ctx, title="Multiple SPF records published",
+                    ctx, title="Multiple SPF records, RFC 7208 invalid",
                     severity=MEDIUM, cwe="CWE-290",
-                    description="More than one v=spf1 record breaks evaluation per RFC 7208.",
+                    description="More than one v=spf1 record causes RFC 7208 permerror.",
                     evidence="\n".join(spf), detection_method="TXT record query",
                     confidence=CONFIRMED, remediation="Merge into a single SPF record.",
                     tags=["dns", "email"]))
@@ -241,7 +323,23 @@ class DnsSecurityModule(BaseModule):
                     tags=["dns", "email"]))
 
         dmarc = await R.query(r, f"_dmarc.{apex}", "TXT")
-        dmarc_rec = next((d for d in dmarc if d.lower().startswith("v=dmarc1")), "")
+        dmarc_recs = [d for d in dmarc if d.strip().lower().startswith("v=dmarc1")]
+        # N2: >1 v=DMARC1 TXT -> MEDIUM "Multiple DMARC records, second ignored"
+        if len(dmarc_recs) > 1:
+            out.append(self.make(
+                ctx,
+                title="Multiple DMARC records, second ignored",
+                severity=MEDIUM,
+                cwe="CWE-290",
+                description="Multiple v=DMARC1 TXT records exist at _dmarc; RFC 7489 requires receivers to ignore DMARC or disregard additional records.",
+                evidence="\n".join(dmarc_recs),
+                detection_method="DMARC TXT record count",
+                confidence=CONFIRMED,
+                remediation="Publish exactly one v=DMARC1 TXT record at _dmarc.",
+                tags=["dns", "email", "dmarc"],
+            ))
+
+        dmarc_rec = dmarc_recs[0] if dmarc_recs else ""
         if not dmarc_rec:
             out.append(self.make(
                 ctx, title="No DMARC record published",
@@ -253,17 +351,16 @@ class DnsSecurityModule(BaseModule):
                 remediation="Publish v=DMARC1; p=none; rua=mailto:... then tighten to "
                             "quarantine/reject.", tags=["dns", "email", "spoofing"]))
         else:
-            pol = re.search(r"\bp\s*=\s*(\w+)", dmarc_rec, re.I)
-            value = (pol.group(1).lower() if pol else "")
-            if value == "none":
-                out.append(self.make(
-                    ctx, title="DMARC policy is 'none' (monitor only)",
-                    severity=LOW, cwe="CWE-290",
-                    description="p=none collects reports but does not block spoofed mail.",
-                    evidence=dmarc_rec, detection_method="DMARC policy parsing",
-                    confidence=CONFIRMED, remediation="Advance to p=quarantine then p=reject.",
-                    tags=["dns", "email"]))
-            elif not pol:
+            tags = parse_dmarc_tags(dmarc_rec)
+            p_val = tags.get("p", "").lower()
+            sp_val = tags.get("sp", "").lower()
+            pct_raw = tags.get("pct", "100")
+            try:
+                pct_val = int(pct_raw)
+            except ValueError:
+                pct_val = 100
+
+            if not p_val:
                 out.append(self.make(
                     ctx, title="DMARC record has no policy (p=)",
                     severity=MEDIUM, cwe="CWE-290",
@@ -271,6 +368,64 @@ class DnsSecurityModule(BaseModule):
                     evidence=dmarc_rec, detection_method="DMARC policy parsing",
                     confidence=CONFIRMED, remediation="Add p=quarantine or p=reject.",
                     tags=["dns", "email"]))
+            elif p_val == "none":
+                out.append(self.make(
+                    ctx, title="DMARC policy is 'none' (monitor only)",
+                    severity=LOW, cwe="CWE-290",
+                    description="p=none collects reports but does not block spoofed mail.",
+                    evidence=dmarc_rec, detection_method="DMARC policy parsing",
+                    confidence=CONFIRMED, remediation="Advance to p=quarantine then p=reject.",
+                    tags=["dns", "email"]))
+            elif p_val == "quarantine" and pct_val < 100:
+                out.append(self.make(
+                    ctx,
+                    title=f"DMARC quarantine policy applies to only {pct_val}% of messages (pct<100)",
+                    severity=LOW,
+                    cwe="CWE-290",
+                    description=f"DMARC p=quarantine is configured with pct={pct_val}, leaving {100 - pct_val}% of failing mail unquarantined.",
+                    evidence=dmarc_rec,
+                    detection_method="DMARC policy parsing",
+                    confidence=CONFIRMED,
+                    remediation="Set pct=100 (or omit pct) and advance to p=reject.",
+                    tags=["dns", "email", "dmarc"],
+                ))
+
+            if p_val == "reject" and sp_val == "none":
+                out.append(self.make(
+                    ctx,
+                    title="DMARC subdomain policy (sp=none) weaker than domain policy (p=reject)",
+                    severity=LOW,
+                    cwe="CWE-290",
+                    description="While the apex enforces p=reject, subdomains explicitly allow spoofed mail via sp=none.",
+                    evidence=dmarc_rec,
+                    detection_method="DMARC policy parsing",
+                    confidence=CONFIRMED,
+                    remediation="Set sp=reject or sp=quarantine to protect subdomains from spoofing.",
+                    tags=["dns", "email", "dmarc"],
+                ))
+
+            # N3: DMARC rua=/ruf= pointing outside registrable domain
+            rep_uris = ",".join(filter(None, [tags.get("rua", ""), tags.get("ruf", "")]))
+            ext_doms = [
+                d for d in extract_dmarc_report_domains(rep_uris)
+                if d != registrable and not d.endswith("." + registrable)
+            ]
+            if ext_doms:
+                out.append(self.make(
+                    ctx,
+                    title="DMARC reports go to third party",
+                    severity=LOW,
+                    cwe="CWE-200",
+                    description=(
+                        f"DMARC rua/ruf points to external domain(s) ({', '.join(ext_doms)}). "
+                        f"Verify `{apex}._report._dmarc.<third-party>` TXT authorization."
+                    ),
+                    evidence=f"DMARC: {dmarc_rec}\nExternal report domain(s): {', '.join(ext_doms)}",
+                    detection_method="DMARC rua/ruf domain inspection",
+                    confidence=CONFIRMED,
+                    remediation="Verify third-party DMARC processor authorization (`_report._dmarc` TXT record).",
+                    tags=["dns", "email", "dmarc"],
+                ))
 
         dkim_found = await self._dkim(r, apex, ctx.config)
         if dkim_found:

@@ -72,3 +72,9 @@
 ### Item M — Wildcard DNS detection & brute-force gate
 - Added `evaluate_wildcard_dns()` and pre-brute-force 2-label random 8-character resolution under the apex in `modules/dns_security.py`.
 - When both random labels resolve, set `wildcard_dns = True` and `brute_force_enabled = False`, emit `INFO` `"Wildcard DNS detected - subdomain brute-force unreliable"`, and skip dictionary brute-force.
+
+### Item N — DNS conflict & anomaly checks (SPF, DMARC, MX, and null-mail spoofing)
+- Updated `modules/dns_security.py` to flag `>1` `v=spf1` record as `MEDIUM` `"Multiple SPF records, RFC 7208 invalid"` and `>1` `v=DMARC1` record as `MEDIUM` `"Multiple DMARC records, second ignored"`.
+- Added full DMARC tag parser (`p`, `sp`, `pct`, `adkim`, `aspf`, `rua`, `ruf`): `p=none` -> `LOW`, `p=quarantine` with `pct<100` -> `LOW`, `sp=none` when `p=reject` -> `LOW`, and external `rua=`/`ruf=` domains -> `LOW` `"DMARC reports go to third party"`.
+- Added MX anomaly checks for priority `0` outside the registrable domain and Cloudflare synthetic `_dc-mx.*` records (`LOW` origin-IP disclosure risk).
+- Flagged domains with neither `MX` nor `SPF` as `MEDIUM` `"Domain sends no mail, spoofable"` (`remediation: v=spf1 -all`).

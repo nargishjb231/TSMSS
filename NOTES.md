@@ -111,3 +111,13 @@
   1. Resolve 2 random 8-character labels (`wc<6hex>.<apex>`) before running dictionary brute-force (`M1`).
   2. If both resolve (`M2`), set `ctx.wildcard_dns = True` and `ctx.brute_force_enabled = False`, emit `INFO` `"Wildcard DNS detected - subdomain brute-force unreliable"`, and skip dictionary brute-force.
 - **Tradeoff**: Adds 2 DNS `A` queries per apex domain before dictionary enumeration.
+
+## Item N — DNS Conflict & Anomaly Checks (SPF, DMARC, MX)
+- **Root Cause**: `codmshopbd.com` published two conflicting DMARC records (`p=none` and `p=quarantine; rua=mailto:...@dmarc.brevo.com`) and an MX priority 0 pointing to `fbooks.me` paired with a synthetic Cloudflare `_dc-mx.*` record, while domains with neither MX nor SPF were silently skipped despite being spoofable.
+- **Detection Decision**:
+  1. Flag `>1` `v=spf1` record (`MEDIUM` `"Multiple SPF records, RFC 7208 invalid"`, `N1`) and `>1` `v=DMARC1` record (`MEDIUM` `"Multiple DMARC records, second ignored"`, `N2`).
+  2. Flag DMARC `rua=`/`ruf=` pointing outside the registrable domain as `LOW` `"DMARC reports go to third party"` (`N3`).
+  3. Flag MX priority `0` outside the registrable domain and Cloudflare synthetic `_dc-mx.*` records as `LOW` (`N4`).
+  4. Parse DMARC `p`, `sp`, `pct`, `adkim`, `aspf` (`N5`) and flag `p=quarantine` with `pct<100` (`LOW`) and `sp=none` with `p=reject` (`LOW`).
+  5. When a domain has no `MX` and no `SPF` (`N6`), emit `MEDIUM` `"Domain sends no mail, spoofable"` (`remediation: v=spf1 -all`).
+- **Tradeoff**: Web-only domains that never send mail will receive a `MEDIUM` finding until they publish a null SPF (`v=spf1 -all`) record.
