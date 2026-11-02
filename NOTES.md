@@ -104,3 +104,10 @@
   3. On `CF_DNS_ONLY`, emit `MEDIUM` `"Origin IP exposed behind Cloudflare (proxy bypassed)"`, set `scan_target = origin_ip` (`L3`), and emit `"Cloudflare DNS only - no WAF in path"` instead of `"WAF detected: Cloudflare"` (`L4`).
   4. When `>=2` `A` records lie in different `/16` networks (and are not all inside Cloudflare anycast), emit `LOW` `"Multiple A records in distinct networks, possible split origin or dangling record"` (`L5`).
 - **Tradeoff**: Requires maintaining Cloudflare's published CIDR list in `dns/topology.py` (which changes very rarely).
+
+## Item M — Wildcard DNS Detection & Brute-Force Gate
+- **Root Cause**: Zones with wildcard `*.domain` DNS records resolved every dictionary word in `subdomain_wordlist`, flooding reports with nonexistent subdomains.
+- **Detection Decision**:
+  1. Resolve 2 random 8-character labels (`wc<6hex>.<apex>`) before running dictionary brute-force (`M1`).
+  2. If both resolve (`M2`), set `ctx.wildcard_dns = True` and `ctx.brute_force_enabled = False`, emit `INFO` `"Wildcard DNS detected - subdomain brute-force unreliable"`, and skip dictionary brute-force.
+- **Tradeoff**: Adds 2 DNS `A` queries per apex domain before dictionary enumeration.

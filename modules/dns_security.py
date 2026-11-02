@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 
 from core import resolver as R
-from core.finding import CONFIRMED, HIGH_CONF, CRITICAL, HIGH, INFO, LOW, MEDIUM, NEEDS_MANUAL
+from core.finding import CONFIRMED, HIGH_CONF, CRITICAL, HIGH, INFO, LOW, MEDIUM, NEEDS_MANUAL, Finding
 from dns.topology import analyze_topology
 from modules.base import BaseModule
 
@@ -85,6 +86,43 @@ def dedupe_subdomains(
         seen_names.add(canon)
         out.append((canon, ip_tuple))
     return out
+
+
+def evaluate_wildcard_dns(
+    probe1_ips: list[str],
+    probe2_ips: list[str],
+    *,
+    target_url: str = "https://example.com/",
+    apex: str = "example.com",
+) -> tuple[bool, bool, set[str], list[Finding]]:
+    """M1 & M2: Evaluate 2 random 8-char label resolutions under *apex*.
+
+    Returns ``(wildcard_dns, brute_force_enabled, wildcard_ips, findings)``.
+    """
+    p1 = [str(ip).strip() for ip in (probe1_ips or []) if str(ip).strip()]
+    p2 = [str(ip).strip() for ip in (probe2_ips or []) if str(ip).strip()]
+    if p1 and p2:
+        wc_ips = set(p1) | set(p2)
+        f = Finding(
+            target=target_url,
+            url=target_url,
+            category="DNS Security",
+            module="dns_security",
+            title="Wildcard DNS detected - subdomain brute-force unreliable",
+            severity=INFO,
+            cwe="CWE-200",
+            confidence=CONFIRMED,
+            description=(
+                f"Two random 8-character labels under *.{apex} both resolved ({', '.join(sorted(wc_ips))}). "
+                "Dictionary subdomain brute-force is disabled to prevent false-positive subdomain enumeration."
+            ),
+            evidence=f"Wildcard probe 1 -> {p1}\nWildcard probe 2 -> {p2}\nbrute_force_enabled=false",
+            detection_method="2-probe random label wildcard check",
+            remediation="Use passive Certificate Transparency logs (subfinder) rather than DNS dictionary brute-force.",
+            tags=["dns", "wildcard"],
+        )
+        return True, False, wc_ips, [f]
+    return False, True, set(), []
 
 
 class DnsSecurityModule(BaseModule):
@@ -349,6 +387,22 @@ class DnsSecurityModule(BaseModule):
 
     async def _subdomains(self, r, ctx, host, out):
         apex = await self._apex(r, host)
+        # M1: Resolve 2 random 8-char labels under apex before brute-forcing
+        lbl1 = f"wc{secrets.token_hex(3)}.{apex}"
+        lbl2 = f"wc{secrets.token_hex(3)}.{apex}"
+        p1, p2 = await asyncio.gather(R.query(r, lbl1, "A"), R.query(r, lbl2, "A"), return_exceptions=True)
+        ips1 = p1 if isinstance(p1, list) else []
+        ips2 = p2 if isinstance(p2, list) else []
+        is_wc, bf_enabled, wc_ips, wc_findings = evaluate_wildcard_dns(
+            ips1, ips2, target_url=ctx.target.url, apex=apex
+        )
+        ctx.wildcard_dns = is_wc
+        ctx.brute_force_enabled = bf_enabled
+        if is_wc:
+            out.extend(wc_findings)
+            ctx.subdomains = []
+            return
+
         words = ctx.config.get("dns.subdomain_wordlist", [])[:30]
         candidates: list[str] = []
         for w in words:

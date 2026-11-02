@@ -68,3 +68,7 @@
 - Added `dns/topology.py` (with `dnspython` package bridge in `dns/__init__.py`) maintaining Cloudflare IPv4/IPv6 CIDR networks and classifying targets into `CF_PROXIED`, `CF_DNS_ONLY`, or `DIRECT`.
 - When `CF_DNS_ONLY` (Cloudflare `NS` + non-Cloudflare `A`/`AAAA`), emit `MEDIUM` `"Origin IP exposed behind Cloudflare (proxy bypassed)"`, set `scan_target = origin_ip`, and emit `"Cloudflare DNS only - no WAF in path"` (`INFO`) while suppressing false Cloudflare WAF detections.
 - When `>=2` `A` records resolve across distinct `/16` networks outside a single CDN anycast, emit `LOW` `"Multiple A records in distinct networks, possible split origin or dangling record"`.
+
+### Item M — Wildcard DNS detection & brute-force gate
+- Added `evaluate_wildcard_dns()` and pre-brute-force 2-label random 8-character resolution under the apex in `modules/dns_security.py`.
+- When both random labels resolve, set `wildcard_dns = True` and `brute_force_enabled = False`, emit `INFO` `"Wildcard DNS detected - subdomain brute-force unreliable"`, and skip dictionary brute-force.
