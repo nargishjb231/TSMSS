@@ -35,3 +35,11 @@
   3. Track per-module/check outcomes (`ran`, `skipped`, `failed`) on `TargetScanResult.checks_account` (`D3`).
   4. When `>20%` of checks on a reachable target are `skipped` or `failed` (`D4`), set `state = "PARTIAL"`, format `score_display` as `~<score> (partial: <ran>/<total> checks ran)`, and exclude the target from the global score average.
 - **Tradeoff**: Unreachable hosts wait ~4–4.8s across 3 retry attempts before being marked `INCOMPLETE`, trading slightly longer scan times on dead hosts for zero single-timeout false positives.
+
+## Item E — Edge / WAF Challenge Interstitial Detection
+- **Root Cause**: `diamondtopupbd.com` and `gamebuybd.com` returned HTTP `403` `"Just a moment..."` Cloudflare challenge pages on all attempts. The scanner previously parsed `<meta http-equiv="content-security-policy">` inside the Cloudflare interstitial HTML as the application's CSP and raised missing application header findings against the challenge page.
+- **Detection Decision**:
+  1. Detect Cloudflare, Sucuri, Akamai, Imperva, and DataDome interstitials (`probe/challenge.py`, `E1`).
+  2. Retry once with a browser `User-Agent` + `Accept` + `Accept-Language` (`E2`).
+  3. If still challenged (`E3`), set `edge_banner = "EDGE-CHALLENGE (app not observed)"`, tag findings with `edge=True`, record `csp_source="meta"` (or `"header"`) on an `INFO` edge note (`"describes edge response"`), and suppress all application-header claims (`Missing HSTS`, `Missing CSP`, `Missing XFO`) and downstream app-layer probes.
+- **Tradeoff**: Challenged targets cannot have their origin application headers or paths audited without origin IP discovery or WAF allowlisting, but reports now honestly state `EDGE-CHALLENGE (app not observed)` with `0` bogus application-header findings.

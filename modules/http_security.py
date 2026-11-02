@@ -7,6 +7,7 @@ from core.finding import CONFIRMED, HIGH_CONF, INFO, LOW, MEDIUM, NEEDS_MANUAL
 from modules.base import BaseModule
 from modules.headers import EXPECTED_PRESENT, HeaderModule, _dump
 from net.client import make_unreachable_finding
+from probe.challenge import EDGE_BANNER, detect_challenge, extract_meta_csp
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 PROBE_METHODS = ["OPTIONS", "TRACE", "PUT", "DELETE", "PATCH", "DEBUG"]
@@ -43,6 +44,11 @@ class HttpSecurityModule(BaseModule):
             out.append(make_unreachable_finding(ctx.target.url, ctx.http_unreachable))
             return out
         ctx.homepage = base
+        is_chal, chal_prov = detect_challenge(base.status, base.headers, base.body)
+        if getattr(base, "edge_challenged", False) or is_chal:
+            ctx.edge_challenged = True
+            ctx.edge_banner = EDGE_BANNER
+            return self._handle_edge_challenge(ctx, base, chal_prov or getattr(base, "challenge_provider", "Edge"))
         out += await self._headers(ctx, base)
         out += await self._xcto(ctx, base)
         out += await self._transport(ctx, base)
@@ -51,6 +57,62 @@ class HttpSecurityModule(BaseModule):
         out += await self._clickjacking(ctx, base)
         out += await self._cache_control(ctx, base)
         return out
+
+    def _handle_edge_challenge(self, ctx, resp, provider: str) -> list:
+        """E3: When only an edge/WAF challenge page is returned, suppress app-header claims."""
+        found = []
+        meta_csp = extract_meta_csp(resp.body)
+        hdr_csp = resp.header("content-security-policy")
+        csp_src = "meta" if meta_csp else ("header" if hdr_csp else "")
+        evidence_lines = [
+            f"Banner: {EDGE_BANNER}",
+            f"Provider: {provider or 'WAF/CDN'}",
+            f"Status: {resp.status}",
+            "Note: describes edge response (application origin not observed)",
+        ]
+        if meta_csp:
+            evidence_lines.append(f"csp_source: meta\nMeta CSP: {meta_csp[:300]}")
+        elif hdr_csp:
+            evidence_lines.append(f"csp_source: header\nHeader CSP: {hdr_csp[:300]}")
+
+        f_edge = self.make(
+            ctx,
+            title=f"{EDGE_BANNER} — {provider or 'WAF'} interstitial blocked origin inspection",
+            severity=INFO,
+            cwe="CWE-693",
+            description=(
+                "The target returned a bot/WAF challenge interstitial on all attempts "
+                "(including browser User-Agent retry). Application headers cannot be "
+                "verified; this finding describes edge response behavior only."
+            ),
+            evidence="\n".join(evidence_lines),
+            detection_method="WAF/CDN challenge detection",
+            confidence=CONFIRMED,
+            remediation="Allowlist the scanner IP at the WAF/CDN or test origin directly if authorized.",
+            tags=["edge", "challenge", "waf"],
+        )
+        f_edge.edge = True
+        f_edge.csp_source = csp_src
+        found.append(f_edge)
+
+        # Only HSTS if explicitly present on the 403/503 edge response is evaluated as an edge finding
+        hsts = resp.header("strict-transport-security")
+        if hsts and "max-age=0" in hsts.lower():
+            f_hsts = self.make(
+                ctx,
+                title="Edge Strict-Transport-Security sets max-age=0 (describes edge response)",
+                severity=MEDIUM,
+                cwe="CWE-319",
+                description="The edge challenge response disables HSTS via max-age=0 (describes edge response).",
+                evidence=f"Strict-Transport-Security: {hsts}\ndescribes edge response",
+                detection_method="Edge header value validation",
+                confidence=CONFIRMED,
+                remediation="Configure a positive HSTS max-age on the CDN/edge.",
+                tags=["edge", "headers", "hsts"],
+            )
+            f_hsts.edge = True
+            found.append(f_hsts)
+        return found
 
     async def _headers(self, ctx, resp):
         found = []

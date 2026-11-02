@@ -25,3 +25,8 @@
 - Updated `modules/ssl_tls.py` to retry certificate handshakes 3 times via `fetch_sync()` so transient timeouts do not emit false `"TLS handshake with certificate validation failed"` findings.
 - When all 3 attempts fail on a target, emit a single `HIGH` finding `TARGET_UNREACHABLE` (`CWE-400`) and mark `result.state = "INCOMPLETE"` and `result.grade = "INCOMPLETE"` (`score = None`).
 - Added per-check outcome tracking (`ran`, `skipped`, `failed`) in `core/engine.py`; when `>20%` of checks are skipped or failed, mark `result.state = "PARTIAL"` and prefix `score_display` with `~`.
+
+### Item E — Edge / WAF challenge detection & meta-CSP separation
+- Added `probe/challenge.py` detecting Cloudflare (`cf-mitigated: challenge`, `status in (403, 503)` with `"Just a moment..."` or `"challenges.cloudflare.com"`), Sucuri, Akamai, Imperva, and DataDome interstitials.
+- Retried challenged responses once in `core/http_client.py` using browser `User-Agent`, `Accept`, and `Accept-Language` headers.
+- When still challenged, set target banner to `EDGE-CHALLENGE (app not observed)`, tagged findings with `edge=True`, recorded `csp_source="meta"` (or `"header"`) as an `INFO` edge note (`"describes edge response"`), and suppressed application-header findings (`Missing HSTS`, `Missing CSP`, `Missing XFO`).

@@ -18,6 +18,7 @@ from net.client import (
     should_retry_status,
 )
 from paths import validate_response_body
+from probe.challenge import BROWSER_HEADERS, detect_challenge
 
 
 class StopRequested(Exception):
@@ -44,6 +45,8 @@ class Fetched:
     set_cookies: list[str] = field(default_factory=list)
     multi_headers: dict[str, list[str]] = field(default_factory=dict)
     error: str | None = None
+    edge_challenged: bool = False
+    challenge_provider: str = ""
 
     def __post_init__(self) -> None:
         if self.set_cookies and "set-cookie" not in self.multi_headers:
@@ -182,6 +185,31 @@ class HttpClient:
                     continue
                 if allow_redirects:
                     await self._walk_redirects(fetched, headers, attempt, host)
+                is_chal, chal_prov = detect_challenge(fetched.status, fetched.headers, fetched.body)
+                if is_chal:
+                    # E2: Retry once with browser User-Agent + Accept + Accept-Language
+                    req_hdrs = dict(kwargs.get("headers") or {})
+                    req_hdrs.update(BROWSER_HEADERS)
+                    retry_kwargs = dict(kwargs)
+                    retry_kwargs["headers"] = req_hdrs
+                    self.counter["requests"] = self.counter.get("requests", 0) + 1
+                    resp2 = await self._client.request(method, url, **retry_kwargs)
+                    body2 = await self._read_body(resp2)
+                    headers2 = {k.lower(): v for k, v in resp2.headers.items()}
+                    multi2 = _extract_multi_headers(resp2.headers)
+                    is_chal2, chal_prov2 = detect_challenge(resp2.status_code, headers2, body2)
+                    fetched = Fetched(
+                        url,
+                        resp2.status_code,
+                        headers2,
+                        body2,
+                        elapsed,
+                        final_url=str(resp2.url),
+                        set_cookies=resp2.headers.get_list("set-cookie"),
+                        multi_headers=multi2,
+                        edge_challenged=is_chal2,
+                        challenge_provider=chal_prov2 or chal_prov,
+                    )
                 return fetched
             except (httpx.TimeoutException, httpx.TransportError, ConnectionResetError, OSError) as exc:
                 last = Fetched(url, 0, {}, "", 0.0, error=f"{type(exc).__name__}: {exc}")

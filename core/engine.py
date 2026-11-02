@@ -29,6 +29,8 @@ class TargetScanResult:
     state: str = "COMPLETE"
     score_display: str = "100"
     checks_account: dict = field(default_factory=lambda: {"ran": 0, "skipped": 0, "failed": 0})
+    edge_banner: str = ""
+    edge_challenged: bool = False
 
 MODULE_ORDER = [
     "dns_security", "ssl_tls", "http_security", "reconnaissance", "cookies", "cors",
@@ -166,6 +168,9 @@ class TargetEngine:
             score_display = f"~{value} (partial: {ran}/{total} checks ran)"
 
         elapsed = int(time.monotonic() - started)
+        if getattr(ctx, "edge_challenged", False):
+            for f in findings:
+                f.edge = True
         return TargetScanResult(
             url=url,
             findings=findings,
@@ -178,14 +183,20 @@ class TargetEngine:
             state=state,
             score_display=score_display,
             checks_account=acct,
+            edge_banner=getattr(ctx, "edge_banner", ""),
+            edge_challenged=bool(getattr(ctx, "edge_challenged", False)),
         )
 
     async def _run_modules(self, ctx, sink: list, timeout: float) -> None:
+        edge_allowed = {"dns_security", "ssl_tls", "http_security", "infrastructure"}
         for module in self.modules:
             if ctx.stop_event.is_set():
                 ctx.checks_account["skipped"] = ctx.checks_account.get("skipped", 0) + 1
                 continue
             if getattr(ctx, "http_unreachable", "") and getattr(module, "needs_http", True):
+                ctx.checks_account["skipped"] = ctx.checks_account.get("skipped", 0) + 1
+                continue
+            if getattr(ctx, "edge_challenged", False) and module.name not in edge_allowed:
                 ctx.checks_account["skipped"] = ctx.checks_account.get("skipped", 0) + 1
                 continue
             try:

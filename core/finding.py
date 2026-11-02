@@ -79,6 +79,9 @@ class Finding:
     impact: str = ""
     false_positive_notes: str = ""
     test_id: str = ""
+    edge: bool = False
+    csp_source: str = ""
+    check_outcome: str = "ran"
 
     def __post_init__(self) -> None:
         if not self.finding_id:
