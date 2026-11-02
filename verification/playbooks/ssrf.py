@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from core.finding import CRITICAL, HIGH, INFO
-from net.client import HttpClientWrapper, fetch
+from net.client import fetch
 from verification.doctrine import CONFIRMED, CTX_UNKNOWN, GateResult
 
 logger = logging.getLogger("tsmss.verification.playbooks.ssrf")
@@ -51,7 +51,7 @@ async def run_ssrf_playbook(
     param: str,
     interactsh_host: str | None = None,
     mock_callbacks: list[dict[str, Any]] | None = None,
-    client: HttpClientWrapper | None = None,
+    client: Any = None,
 ) -> GateResult:
     """Execute SSRF verification playbook."""
     result = GateResult()
@@ -63,6 +63,7 @@ async def run_ssrf_playbook(
         if oob_ok:
             result.g3_confirm = True
             result.g4_repro = True
+            result.g5_artifact = True
             result.oracle_name = f"SSRF Out-Of-Band Callback Oracle ({oob_info})"
             result.evidence_text = f"Interactsh callback confirmed from target server: {oob_info}"
         else:

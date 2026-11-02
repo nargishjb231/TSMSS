@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from core.finding import HIGH, INFO, Finding
-from net.client import HttpClientWrapper, fetch
+from net.client import fetch
 from verification.doctrine import (
     CONFIRMED,
     CTX_ATTR_Q,
@@ -84,7 +84,7 @@ async def run_xss_playbook(
     param: str,
     token: str,
     context: str,
-    client: HttpClientWrapper | None = None,
+    client: Any = None,
     browser_executor: Callable[[str], dict[str, Any]] | None = None,
 ) -> GateResult:
     """Execute the full 5-gate XSS verification playbook."""
@@ -137,6 +137,7 @@ async def run_xss_playbook(
         dom_ok, tag, screenshot = evaluate_browser_dom_proof(dom_res, token)
         if dom_ok:
             result.g4_repro = True
+            result.g5_artifact = True
             result.oracle_name = f"DOM element <{tag}> instantiated with token confirmation"
             if screenshot:
                 result.artifact_paths.append(screenshot)

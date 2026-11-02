@@ -14,7 +14,7 @@ import logging
 from urllib.parse import urlparse
 
 from core.finding import MEDIUM
-from net.client import HttpClientWrapper, fetch
+from net.client import fetch
 from verification.doctrine import CONFIRMED, CTX_HEADER, GateResult
 
 logger = logging.getLogger("tsmss.verification.playbooks.open_redirect")

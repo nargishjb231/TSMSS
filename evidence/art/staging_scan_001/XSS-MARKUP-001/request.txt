@@ -1,0 +1,3 @@
+> GET /search?q=%22%3E%3Cb%3Ezz112233%3C%2Fb%3E HTTP/1.1
+> Host: staging.internal.tsmss.local
+> User-Agent: TSMSS/2.0-verify

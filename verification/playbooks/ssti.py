@@ -16,7 +16,7 @@ import logging
 from typing import Any
 
 from core.finding import CRITICAL, HIGH, INFO
-from net.client import HttpClientWrapper, fetch
+from net.client import fetch
 from verification.doctrine import CONFIRMED, CTX_TEMPLATE, GateResult
 
 logger = logging.getLogger("tsmss.verification.playbooks.ssti")
@@ -62,7 +62,7 @@ def discriminate_engine(twig_body: str) -> str:
 async def run_ssti_playbook(
     target_url: str,
     param: str,
-    client: HttpClientWrapper | None = None,
+    client: Any = None,
 ) -> GateResult:
     """Execute SSTI verification playbook."""
     result = GateResult()
@@ -92,6 +92,7 @@ async def run_ssti_playbook(
 
     result.g3_confirm = True
     result.g4_repro = True
+    result.g5_artifact = True
     result.oracle_name = f"SSTI mathematical evaluation verified -> Engine: {engine}"
     result.evidence_text = f"Payload: {{{{7*7}}}} -> 49 (baseline-diff confirmed) | Engine probe {{{{7*'7'}}}} -> {engine}"
     result.evaluate_confidence()

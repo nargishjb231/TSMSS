@@ -154,3 +154,35 @@
   2. Test every modified module with positive and negative unit assertions in `tests/test_accuracy.py` (`R2`) and temp-dir writability failure in `tests/test_tempdir.py` (`R3`).
   3. Replay all 15 fixtures through `tests/integration/replay.py` (`R4`) with zero network calls.
 - **Tradeoff**: None; all 15 fixture replays execute in `<0.5s` offline.
+
+## Verification-First Architecture: Ground-Truth Oracles & False-Positive Tradeoffs
+
+### 1. The Five-Gate Standard (G1..G5)
+Every finding reported as `CONFIRMED` must strictly pass all five verification gates:
+1. **G1 CANDIDATE**: Payload injected; target response differs measurably from the host's calibrated baseline.
+2. **G2 CONTEXT**: Injection syntax context classified and named (`MARKUP`, `ATTR_Q`, `ATTR_UQ`, `JS_STRING`, `JSON`, `COMMENT`, `TEXT`, `SQL`, `TEMPLATE`, `HEADER`).
+3. **G3 CONFIRM**: Class-specific ground-truth oracle fires.
+4. **G4 REPRO**: 3 consecutive reproducible runs on a clean session.
+5. **G5 ARTIFACT**: Request dump (cURL format), 1KB response window around oracle trigger, full body SHA-256, timestamp, and tool version stored in `$TMPDIR/art/<scanid>/<findingid>/`.
+
+Findings failing any gate cap at `CANDIDATE` (`INFO`) or are dropped under Kill Rules. Only `CONFIRMED` findings affect the final security score.
+
+### 2. Class-Specific Oracles and False-Positive Tradeoffs
+
+| Class | Ground-Truth Oracle | Verification Mechanism | False-Positive Tradeoff |
+|---|---|---|---|
+| **XSS** | Unescaped tag survival in same context twice + browser DOM element instantiation (`querySelector('b')` / `window.confirm`) | P1-P4 payload bank; verified in DOM via Antigravity browser subagent; screenshot/WebM artifact | Drops reflections in JS strings, RSC flight data, JSON, and entity-encoded templates without DOM sinks. Requires browser subagent for confirmation. |
+| **SQLi** | Boolean differential (`Δ > 3%` across 3 stable runs) and Time-based delay (`median Δ >= 3.0s` across 3 runs) | Injects `1 AND 1=1` vs `1 AND 1=2` and `1 AND SLEEP(5)`; runs `sqlmap --batch --level 3 --risk 2` | Single slow responses and generic database syntax errors are treated as CANDIDATE only. Requires 3 reproducible delayed responses. |
+| **SSTI** | Math evaluation with baseline-diff (`{{7*7}} -> 49`) + engine discrimination (`{{7*'7'}} -> 7777777` Twig vs `49` Jinja2) | Injects polyglot template expressions; verifies mathematical evaluation against baseline body; runs `SSTImap` | Prevents the "49 appears somewhere" trap where static text contains 49. Ignores template errors that don't evaluate math. |
+| **SSRF** | Out-of-band DNS/HTTP interaction callback or in-band cloud metadata disclosure (`ami-id`, `instance-id`) | Probes internal addresses (`169.254.169.254`, `127.0.0.1`) and polls persistent `interactsh-client` session | Connect timeouts and generic connection resets are discarded. Only proven callbacks or metadata responses are confirmed. |
+| **Open Redirect** | HTTP 3xx status + Location header host != target host (max 1 hop) | Probes `//evil.example`, `/\evil.example`, `https://evil.example`; verifies destination network location | Relative redirects and redirects within apex domain or subdomains are ignored. |
+| **CORS** | `Access-Control-Allow-Origin` reflects injected origin AND `Access-Control-Allow-Credentials: true` | Sends `Origin: https://evil.example` and `Origin: null`; parses headers | Wildcard (`*`) without credentials is capped at `LOW`. Only credentialed arbitrary reflection reaches `HIGH`. |
+| **CRLF** | Injected header (`Set-Cookie: zz=1`) appears as a discrete line in the HTTP response header block | Injects `%0d%0a`, `%0a`, and Unicode CRLF sequences (`%E5%98%8A%E5%98%8D`) | Body reflections of CRLF sequences are ignored. Header must physically appear in HTTP headers. |
+| **Host Header** | Injected host reflects into response Location header, Link header, or HTML canonical `<link>` tag | Sends `X-Forwarded-Host: evil.example`, `X-Host:`, `X-Forwarded-Server:` | Generic reflection inside page text is ignored; reflection must affect routing or canonicalization. |
+| **Path Traversal** | System account entry (`root:x:0:0`) or Windows ini section (`[extensions]`) in response body | Probes `../../../../etc/passwd` and Windows equivalents | Path echoing in error messages or 404 pages is discarded. Requires valid system file markers. |
+| **Prototype Pollution** | Runtime JavaScript object prototype property modification (`({}).zz === 1`) | Injects `?__proto__[zz]=1`; evaluates in browser subagent | URL reflection without prototype pollution execution is ignored. |
+| **JWT** | Server accepts tampered token (`alg: none`, HMAC public key, or `kid` traversal) and honours the claim | Mutates JWT header/payload; tests if endpoint returns 200/201 and user privilege is elevated | Rejections (401/403) or unhonoured claims are classified as non-vulnerable. |
+| **GraphQL** | Introspection query returns schema types or field suggestion leaks | Sends `__schema { types { name } }` introspection payload | GraphQL endpoints with introspection disabled produce no finding. |
+| **Web Cache Deception** | Dynamic HTML response containing private session data cached with public cache headers | Appends `/account/test.css`; fetches unauthenticated and diffs body | Uncached responses or static files returning 404 produce no finding. |
+| **IDOR** | Mutated numeric/UUID identifier returns distinct authorized data without authentication failure | Mutates identifier (±1); diffs response against baseline | Rejections (401/403) or identical responses produce no finding. |
+

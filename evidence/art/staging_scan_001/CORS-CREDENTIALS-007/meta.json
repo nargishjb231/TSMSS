@@ -1,0 +1,14 @@
+{
+  "finding_id": "CORS-CREDENTIALS-007",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/api/user/me",
+  "title": "CORS Misconfiguration: Arbitrary Origin Allowed with Credentials",
+  "severity": "HIGH",
+  "confidence": "CONFIRMED",
+  "oracle": "ACAO header reflection (https://evil.example) + ACAC: true",
+  "sha256": "4055dc0dd3ece5bfd016ed86d0658e7b4966cfe0779047e4f1bf82e49f55d44f",
+  "timestamp": "2026-11-02T08:44:53.463780+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

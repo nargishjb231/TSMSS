@@ -1,0 +1,14 @@
+{
+  "finding_id": "XSS-MARKUP-001",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/search?q=%22%3E%3Cb%3Ezz112233%3C%2Fb%3E",
+  "title": "Reflected Cross-Site Scripting (DOM Instantiation Proven)",
+  "severity": "HIGH",
+  "confidence": "CONFIRMED",
+  "oracle": "Unescaped <b> DOM element execution + document.querySelector('b') positive",
+  "sha256": "88307776293e3a8e80ddd91daf951848de88d345b6186a2216e916daecffb321",
+  "timestamp": "2026-11-02T08:44:53.453596+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

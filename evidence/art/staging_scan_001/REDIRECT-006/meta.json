@@ -1,0 +1,14 @@
+{
+  "finding_id": "REDIRECT-006",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/login?redirect=https%3A%2F%2Fevil.example",
+  "title": "Open URL Redirection (Arbitrary External Destination)",
+  "severity": "MEDIUM",
+  "confidence": "CONFIRMED",
+  "oracle": "HTTP 302 Location header destination != target origin (evil.example)",
+  "sha256": "97ce2ff596d7dc6498d115efce333234aa26789dc6f4747711df2751b6783614",
+  "timestamp": "2026-11-02T08:44:53.462289+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

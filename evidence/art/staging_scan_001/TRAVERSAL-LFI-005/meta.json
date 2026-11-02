@@ -1,0 +1,14 @@
+{
+  "finding_id": "TRAVERSAL-LFI-005",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/view?file=..%2f..%2f..%2f..%2fetc%2fpasswd",
+  "title": "Path Traversal / Local File Inclusion (Root Account Disclosed)",
+  "severity": "HIGH",
+  "confidence": "CONFIRMED",
+  "oracle": "System account entry regex match (root:x:0:0) in body",
+  "sha256": "d3ac21fe5a2a30c3e8a5608cb0a00179df0c4baf95d2a6755b401aeb0ba50028",
+  "timestamp": "2026-11-02T08:44:53.461070+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

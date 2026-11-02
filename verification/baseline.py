@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.finding import CRITICAL, HIGH, INFO, LOW, MEDIUM
-from net.client import HttpClientWrapper, fetch
+from net.client import fetch
 from probe.soft404 import (
     CONTENT_SIGNATURES,
     SPA_FINGERPRINTS,
@@ -63,7 +63,7 @@ class HostBaseline:
 
 async def calibrate_host(
     base_url: str,
-    client: HttpClientWrapper | None = None,
+    client: Any = None,
     num_probes: int = 3,
 ) -> HostBaseline:
     """Run Phase 0 baseline calibration against *base_url* using 3 random paths."""

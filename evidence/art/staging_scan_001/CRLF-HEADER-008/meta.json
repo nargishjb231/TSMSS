@@ -1,0 +1,14 @@
+{
+  "finding_id": "CRLF-HEADER-008",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/item?id=%0d%0aSet-Cookie:zz_crlf=1",
+  "title": "CRLF / HTTP Response Header Injection",
+  "severity": "MEDIUM",
+  "confidence": "CONFIRMED",
+  "oracle": "Injected Set-Cookie header parsed as discrete header in response block",
+  "sha256": "40a3dbd061e156def2a59779501a52d6fd19fee5c8e12c9fd8f13d5112291a90",
+  "timestamp": "2026-11-02T08:44:53.465536+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

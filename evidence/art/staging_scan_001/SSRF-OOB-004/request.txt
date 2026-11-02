@@ -1,0 +1,3 @@
+> GET /proxy?url=http%3A%2F%2Fstaging.oob.interactsh.com%2Fprobe HTTP/1.1
+> Host: staging.internal.tsmss.local
+> User-Agent: TSMSS/2.0-verify

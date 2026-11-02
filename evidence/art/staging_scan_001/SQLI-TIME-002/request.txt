@@ -1,0 +1,3 @@
+> GET /items?id=1+AND+SLEEP(5) HTTP/1.1
+> Host: staging.internal.tsmss.local
+> User-Agent: TSMSS/2.0-verify

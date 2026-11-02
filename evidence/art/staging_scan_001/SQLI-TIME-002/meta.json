@@ -1,0 +1,14 @@
+{
+  "finding_id": "SQLI-TIME-002",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/items?id=1+AND+SLEEP(5)",
+  "title": "Time-Based Blind SQL Injection (SLEEP 5s Delta Confirmed)",
+  "severity": "CRITICAL",
+  "confidence": "CONFIRMED",
+  "oracle": "Time-delay differential: 3 consecutive runs, median delta 5.12s >= 3.0s",
+  "sha256": "ea6929c104af1139ec6f70864e94b27a2f58f4750d7a1a738c3ed3f36b7c9251",
+  "timestamp": "2026-11-02T08:44:53.457702+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

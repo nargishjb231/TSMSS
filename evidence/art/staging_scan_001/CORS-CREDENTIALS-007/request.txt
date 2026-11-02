@@ -1,0 +1,4 @@
+> GET /api/user/me HTTP/1.1
+> Host: staging.internal.tsmss.local
+> Origin: https://evil.example
+> Cookie: session_id=s3cr3t

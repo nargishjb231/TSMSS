@@ -1,0 +1,14 @@
+{
+  "finding_id": "SSRF-OOB-004",
+  "scan_id": "staging_scan_001",
+  "target_url": "https://staging.internal.tsmss.local/proxy?url=http%3A%2F%2Fstaging.oob.interactsh.com%2Fprobe",
+  "title": "Blind Server-Side Request Forgery (Out-Of-Band DNS/HTTP Callback)",
+  "severity": "HIGH",
+  "confidence": "CONFIRMED",
+  "oracle": "Interactsh out-of-band interaction oracle (DNS + HTTP queries received)",
+  "sha256": "050c17f309f1d05141741977851b50cd015621d711d43ac4aa41498bee3a32f0",
+  "timestamp": "2026-11-02T08:44:53.459811+00:00",
+  "tool_version": "tsmss-2.0-verify",
+  "request_file": "request.txt",
+  "response_slice_file": "response_slice.txt"
+}

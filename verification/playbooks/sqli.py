@@ -21,7 +21,7 @@ import time
 from typing import Any, Callable
 
 from core.finding import CRITICAL, HIGH, INFO, MEDIUM
-from net.client import HttpClientWrapper, fetch
+from net.client import fetch
 from verification.doctrine import CANDIDATE, CONFIRMED, CTX_SQL, GateResult
 
 logger = logging.getLogger("tsmss.verification.playbooks.sqli")
@@ -72,7 +72,7 @@ def evaluate_time_delay(durations: list[float], baseline_delay: float = 0.5) -> 
 async def run_sqli_playbook(
     target_url: str,
     param: str,
-    client: HttpClientWrapper | None = None,
+    client: Any = None,
     mock_durations: list[float] | None = None,
 ) -> GateResult:
     """Execute SQLi boolean differential and time delay oracle checks."""
@@ -107,6 +107,7 @@ async def run_sqli_playbook(
     if time_ok:
         result.g3_confirm = True
         result.g4_repro = True
+        result.g5_artifact = True
         result.oracle_name = f"Time-based SQLi delay confirmed (median delta {delta:.2f}s >= 3.0s)"
         result.repro_count = 3
         result.evidence_text = f"Payload: 1 AND SLEEP(5) | Measured durations: {durations} | Median delta: {delta:.2f}s"

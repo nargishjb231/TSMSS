@@ -20,7 +20,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from core.finding import CRITICAL, HIGH, INFO, LOW, MEDIUM, Finding
-from core.report_manager import split_markdown_by_size
+from core.report_manager import split_markdown_chunks
 from verification.doctrine import CANDIDATE, CONFIRMED, LIKELY
 
 logger = logging.getLogger("tsmss.verification.reporting")
@@ -90,11 +90,14 @@ def format_verified_json_findings(
             elif f.severity == LOW:
                 cvss_score = 3.0
 
+            fid = getattr(f, "finding_id", getattr(f, "id", "TSMSS-00000"))
+            param_name = getattr(f, "parameter", getattr(f, "param", "")) or ""
+
             vj = VerifiedFindingJSON(
-                id=f.id,
+                id=fid,
                 host=host,
                 path=path,
-                param=f.param or "",
+                param=param_name,
                 finding_class=f_class,
                 context=context,
                 severity=f.severity,
@@ -164,8 +167,9 @@ def generate_verified_markdown_report(
             lines.append("| ID | Severity | CWE | Title | Oracle |")
             lines.append("|---|---|---|---|---|")
             for f in confirmed_findings:
+                fid = getattr(f, "finding_id", getattr(f, "id", "TSMSS-00000"))
                 oracle_desc = f.detection_method or "Automated oracle test"
-                lines.append(f"| `{f.id}` | **{f.severity}** | `{f.cwe}` | {f.title} | {oracle_desc} |")
+                lines.append(f"| `{fid}` | **{f.severity}** | `{f.cwe}` | {f.title} | {oracle_desc} |")
         else:
             lines.append("_No machine-confirmed findings for this target._\n")
 
@@ -174,8 +178,9 @@ def generate_verified_markdown_report(
             lines.append("| ID | Severity | Confidence | Title | Reason / Note |")
             lines.append("|---|---|---|---|---|")
             for f in manual_findings:
+                fid = getattr(f, "finding_id", getattr(f, "id", "TSMSS-00000"))
                 note = f.evidence or "Requires manual inspection"
-                lines.append(f"| `{f.id}` | {f.severity} | `{f.confidence}` | {f.title} | {note[:60]} |")
+                lines.append(f"| `{fid}` | {f.severity} | `{f.confidence}` | {f.title} | {note[:60]} |")
         else:
             lines.append("_No manual candidates._\n")
 
@@ -183,5 +188,23 @@ def generate_verified_markdown_report(
 
     full_markdown = "\n".join(lines) + "\n"
     prefix = f"report_verify_{scan_id}"
-    written_files = split_markdown_by_size(full_markdown, output_dir, prefix=prefix, max_chars=100_000)
+    chunks = split_markdown_chunks(full_markdown, max_chars=100_000)
+    written_files: list[Path] = []
+    if len(chunks) == 1:
+        out_file = output_dir / f"{prefix}.md"
+        out_file.write_text(chunks[0], encoding="utf-8")
+        written_files.append(out_file)
+    else:
+        index_lines = [
+            f"# {prefix} Index",
+            f"Audit report split into {len(chunks)} chunks:",
+        ]
+        for idx, chunk in enumerate(chunks, 1):
+            chunk_file = output_dir / f"{prefix}_{idx}.md"
+            chunk_file.write_text(chunk, encoding="utf-8")
+            written_files.append(chunk_file)
+            index_lines.append(f"- [{chunk_file.name}](./{chunk_file.name})")
+        index_file = output_dir / f"{prefix}_index.md"
+        index_file.write_text("\n".join(index_lines) + "\n", encoding="utf-8")
+        written_files.insert(0, index_file)
     return written_files
