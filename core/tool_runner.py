@@ -18,6 +18,7 @@ import yaml
 
 from core.finding import CONFIRMED, HIGH_CONF, LOW_CONF, MEDIUM, MED_CONF, NEEDS_MANUAL
 from core.logger import get
+from paths import tmpdir
 
 log = get("tsmss.tools")
 
@@ -107,7 +108,7 @@ class ToolRunner:
         self.max_runtime = int(config.get("tools.max_runtime", 180))
         self.allow = set(config.get("tools.enabled", []) or [])
         self.deny = set(config.get("tools.disabled", []) or [])
-        self.home = Path(tempfile.mkdtemp(prefix="tsmss-tool-"))
+        self.home = tmpdir(prefix="tsmss-tool-")
 
     def select(self) -> list[ToolSpec]:
         out = []

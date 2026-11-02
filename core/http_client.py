@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from core.scope import ScopeGuard
+from paths import validate_response_body
 
 
 class StopRequested(Exception):
@@ -204,6 +205,17 @@ class HttpClient:
                                   final_url=str(resp.url),
                                   set_cookies=resp.headers.get_list("set-cookie"),
                                   multi_headers=multi)
+                ok_body, body_err = validate_response_body(
+                    body, headers, resp.status_code, method, None
+                )
+                if not ok_body:
+                    fetched.error = body_err
+                    if attempt < attempts:
+                        wait = compute_backoff(attempt, self.retry_backoff, None, max_wait=12.0)
+                        await asyncio.sleep(wait)
+                        last = fetched
+                        continue
+                    return fetched
                 if should_retry_status(resp.status_code) and attempt < attempts:
                     await self._honour_retry_after(resp, attempt, host)
                     last = fetched

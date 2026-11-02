@@ -36,6 +36,7 @@ from core.validator import load_targets, validate
 from core.verification import filter_by_baseline, load_baseline, save_baseline
 from modules.dependency_audit import audit_local_dependencies
 from modules.source_code import audit_source_directory
+from paths import startup_probe
 from ui import dashboard, menu
 from ui.menu import console
 
@@ -1106,6 +1107,7 @@ def _cmd_config(args: argparse.Namespace) -> int:
 
 def cli(argv: list[str]) -> int:
     """Non-interactive entry point. Returns -1 to fall through to the menu."""
+    startup_probe()
     if not argv:
         return -1
     ap = build_parser()
@@ -1139,6 +1141,7 @@ def cli(argv: list[str]) -> int:
 
 # ------------------------------------------------------------------- main
 def main() -> int:
+    startup_probe()
     if sys.argv[1:]:
         rc = cli(sys.argv[1:])
         if rc >= 0:

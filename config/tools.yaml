@@ -161,12 +161,13 @@
   pkg: sqlmap
   output: lines
   args: ["-u", "{target}", "--batch", "--level", "1", "--risk", "1",
-         "--delay", "1", "--timeout", "15", "--smart", "--output-dir", "/tmp/sqlmap"]
+         "--delay", "1", "--timeout", "15", "--smart", "--output-dir", "{dir}"]
   timeout: 180
   confidence: HIGH CONFIDENCE
   line_title: "SQLi (sqlmap): {line}"
   line_severity: HIGH
   only_query: true
+  needs_dir: true
 
 - id: wafw00f
   bin: wafw00f
