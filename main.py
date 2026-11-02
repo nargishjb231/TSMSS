@@ -804,6 +804,8 @@ def _add_scan_flags(parser: argparse.ArgumentParser, is_subcommand: bool = False
                         help="audit a local source code directory and its dependency manifests")
     parser.add_argument("--plain-ui", action="store_true",
                         help="use plain terminal output without Rich panels")
+    parser.add_argument("--no-soft404", action="store_true",
+                        help="disable per-host soft-404 calibration and downgrade")
     parser.add_argument("--min-confidence", default="",
                         choices=["", "CONFIRMED", "STRONG EVIDENCE", "HIGH CONFIDENCE",
                                  "POTENTIAL", "MEDIUM CONFIDENCE", "LOW CONFIDENCE"],
@@ -900,6 +902,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             config.apply_profile(args.profile)
         if getattr(args, "min_confidence", ""):
             config.set("scan.min_confidence", args.min_confidence)
+        if getattr(args, "no_soft404", False):
+            config.set("scan.no_soft404", True)
 
         # Handle local --source-dir mode
         src_dir = getattr(args, "source_dir", "")

@@ -30,6 +30,7 @@ DEFAULTS: dict[str, Any] = {
         "delay_between_requests": 0.12,
         "max_response_bytes": 1_048_576,
         "user_agent": "TSMSS/1.0 (+authorized-security-audit; Termux)",
+        "no_soft404": False,
     },
     "scope": {
         "program_name": "default",

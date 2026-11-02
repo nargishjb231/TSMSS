@@ -75,3 +75,14 @@ class ScanContext:
     login_fields: list = field(default_factory=list)
     csrf_token_present: bool | None = None
     evidence: object = None
+    soft404: object = None
+    soft404_calibration: str = "stable"
+    seen_paths: set = field(default_factory=set)
+    edge_challenged: bool = False
+    edge_banner: str = ""
+    scan_target: str = ""
+    origin_hidden: bool = False
+    resolved_ips: list = field(default_factory=list)
+    wildcard_dns: bool = False
+    brute_force_enabled: bool = True
+    checks_account: dict = field(default_factory=lambda: {"ran": 0, "skipped": 0, "failed": 0})

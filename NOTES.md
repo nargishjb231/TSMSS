@@ -7,3 +7,13 @@
   2. Execute a mandatory 1-byte write+read+unlink probe (`paths.startup_probe()`) at CLI/menu startup; abort immediately with exit code `3` (`"no writable temp directory"`) if no writable directory exists.
   3. Enforce `validate_response_body()` in `HttpClient.request()` so any `0`-byte body on a body-carrying status (`200`, `403`, `404`, `500`) without an explicit `Content-Length: 0` header is marked as a failed fetch (`ok=False`) and retried rather than compared as an empty string.
 - **Tradeoff**: Legitimate HTTP/1.0 servers that close the connection with 0 bytes and omit `Content-Length: 0` are treated as failed fetches rather than valid empty pages, eliminating silent 0-byte differential false positives.
+
+## Item B — Soft-404 Calibration, SPA Catch-All Detection & Content-Signature Gate
+- **Root Cause**: 8 of 19 live targets were SPAs (Nuxt, Next.js, Vue/React) with catch-all routing returning HTTP `200` and the `index.html` bundle for `/wp-config.php.bak`, `/swagger-ui.html`, and `/admin`.
+- **Detection Decision**:
+  1. Calibrate each host with 3 random 8-char paths before running path probes (`probe/soft404.py`), storing status, raw byte length, and MD5 of the script/style-stripped normalized body.
+  2. Classify any path response matching a baseline MD5 or within `max(80, 1% baseline_length)` at the same status as `soft-404`, downgrading to `INFO` with `"soft-404"` in `evidence`.
+  3. Gate every sensitive file/path finding on an explicit content signature (`^[A-Z_][A-Z0-9_]*=` for `.env`, `<?php` for `wp-config.php.bak`, `swagger-ui|openapi` for `/swagger-ui.html`, `^\[core\]` for `.git/config`).
+  4. Fingerprint SPA shells (`data-capo`, `__next_f`, `__NUXT__`, `id="app"`, `id="root"`) so all path probes on SPA hosts default to `INFO` unless their specific content signature matches.
+  5. When the 3 calibration probes vary by `>25%` in length (`soft404_calibration=unstable`), downgrade verified path findings by one severity level.
+- **Tradeoff**: Adds 3 lightweight calibration GET requests per host (disableable via `--no-soft404`) and requires real content signatures for exposure findings, eliminating SPA catch-all false positives at the cost of ignoring custom/redacted backup files that lack standard format headers.

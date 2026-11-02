@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from core.finding import CONFIRMED, HIGH, HIGH_CONF, INFO, LOW, MEDIUM, NEEDS_MANUAL, POTENTIAL
 from modules.base import BaseModule
+from probe.soft404 import calibrate_soft404, evaluate_path_probe, is_soft404
 
 DOC_PATHS = [
     "/swagger.json", "/openapi.json", "/api-docs", "/swagger-ui.html",
@@ -50,25 +51,49 @@ class ApiSecurityModule(BaseModule):
 
     async def _docs(self, ctx):
         out = []
+        if getattr(ctx, "edge_challenged", False):
+            return out
         base = str(ctx.target.root)
+        baseline = await calibrate_soft404(ctx)
+        no_soft404 = bool(ctx.config.get("scan.no_soft404", False))
         for path in DOC_PATHS:
             url = base.rstrip("/") + path
             resp = await ctx.http.request("GET", url, retry=False)
             if not resp.ok or resp.status >= 400:
                 continue
-            body = resp.body[:4000]
-            looks_doc = (
-                '"openapi"' in body or '"swagger"' in body
-                or "swagger-ui" in body.lower() or '"paths"' in body
-                or ("graphql" in body.lower() and "query" in body.lower())
-            )
-            if not looks_doc:
+            if getattr(resp, "edge_challenged", False):
                 continue
-            sev = HIGH if '"openapi"' in body or '"swagger"' in body else MEDIUM
+            body = resp.body[:12000]
+            default_sev = HIGH if ('"openapi"' in body or '"swagger"' in body) else MEDIUM
+            reportable, eff_sev, reason = evaluate_path_probe(
+                path, resp.status, body, default_sev, baseline, no_soft404=no_soft404
+            )
+            if not reportable:
+                continue
+            if reason.startswith("soft-404"):
+                if path == "/swagger-ui.html" and baseline.is_spa:
+                    out.append(self.make(
+                        ctx,
+                        title=f"Soft-404 response on API doc path ({path})",
+                        severity=INFO,
+                        cwe="CWE-200",
+                        description=f"{path} returned HTTP 200 with the SPA catch-all shell rather than API documentation.",
+                        evidence=f"GET {url} -> 200 [{reason}: soft-404]",
+                        detection_method="Soft-404 calibrated path probe",
+                        confidence=CONFIRMED,
+                        url=url,
+                        remediation="Informational: SPA catch-all route.",
+                        tags=["api", "soft-404"],
+                    ))
+                continue
+            if not no_soft404 and is_soft404(resp.status, resp.body, baseline):
+                continue
+            if hasattr(ctx, "seen_paths"):
+                ctx.seen_paths.add(path)
             out.append(self.make(
                 ctx,
                 title=f"API specification or console exposed at {path}",
-                severity=sev,
+                severity=eff_sev,
                 cwe="CWE-200",
                 description="Public API documentation enumerates endpoints, parameters and auth schemes (API9:2023).",
                 evidence=f"GET {url} -> {resp.status}\n{body[:500]}",
