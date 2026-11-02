@@ -19,3 +19,9 @@
 - Prevented URL-decoding of HTTP response bodies prior to tag survival checks so URL-encoded (`%3C`) or unicode-escaped (`\u003c`) reflections inside Next.js RSC flight data (`self.__next_f.push`) are classified as `JS_STRING` (`INFO` / `NEEDS MANUAL VERIFICATION`) instead of `MARKUP`.
 - Enforced two-payload agreement in `modules/vulnerability_indicators.py`: `MARKUP` reflections are only promoted to `HIGH` / `CONFIRMED` when a second harmless tag probe with an independent random 10-character token also survives unescaped in `MARKUP` context; otherwise capped at `MEDIUM` / `NEEDS MANUAL VERIFICATION`.
 - Recorded `context: <CLASS>` in the finding's `evidence` field.
+
+### Item D — Reliability, retries, and incomplete-scan accounting
+- Added `net/client.py` providing `fetch()`, `fetch_sync()`, `compute_backoff()` (3 attempts, backoff `1s`/`3s` with `0-400ms` jitter, retrying on timeout, connection reset, 0-byte body, and `502`/`503`/`504`/`408`/`429`), and `make_unreachable_finding()`.
+- Updated `modules/ssl_tls.py` to retry certificate handshakes 3 times via `fetch_sync()` so transient timeouts do not emit false `"TLS handshake with certificate validation failed"` findings.
+- When all 3 attempts fail on a target, emit a single `HIGH` finding `TARGET_UNREACHABLE` (`CWE-400`) and mark `result.state = "INCOMPLETE"` and `result.grade = "INCOMPLETE"` (`score = None`).
+- Added per-check outcome tracking (`ran`, `skipped`, `failed`) in `core/engine.py`; when `>20%` of checks are skipped or failed, mark `result.state = "PARTIAL"` and prefix `score_display` with `~`.

@@ -210,7 +210,8 @@ async def run_scan(
                 kept, supp = filter_by_baseline(result.findings, baseline_fps)
                 suppressed_total += supp
                 result.findings = kept
-                result.score, result.grade = score(result.findings)
+                if result.state != "INCOMPLETE":
+                    result.score, result.grade = score(result.findings)
             for f in result.findings:
                 counters[f.severity] += 1
             if result.findings and config.get("reporting.include_response_bodies", True):

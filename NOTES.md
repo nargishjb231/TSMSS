@@ -26,3 +26,12 @@
   3. Apply a single global severity/confidence matrix (`C4`): `JS_STRING`/`JSON` reflections with `\u003c` or `\"` are `INFO` / `NEEDS MANUAL VERIFICATION` (promoted to `MEDIUM` / `NEEDS MANUAL VERIFICATION` only if unescaped and paired with an explicit DOM sink like `dangerouslySetInnerHTML`, `innerHTML=`, `document.write(`, `v-html=`, or `{!!`).
   4. Require two-payload agreement (`C5`) with an independent 10-char random token before promoting any `MARKUP` reflection to `HIGH` / `CONFIRMED`.
 - **Tradeoff**: Requires 1 extra HTTP GET request per genuine `MARKUP` reflection to confirm two-payload agreement, and demotes reflections inside `<script>` blocks without visible DOM sinks to `INFO` (`NEEDS MANUAL VERIFICATION`).
+
+## Item D — Reliability, Retries & Incomplete-Scan Accounting
+- **Root Cause**: A single transient TCP/TLS timeout on `bdtopupcenter.com` produced a false `HIGH` `"TLS handshake failed"` finding, silently skipped 13 downstream checks, and still awarded the target `94/A`.
+- **Detection Decision**:
+  1. Route HTTP and TLS connection probes through 3-attempt retry helpers (`net/client.py`: `fetch` and `fetch_sync`) with `1s` / `3s` backoff and `0-400ms` jitter (`D1`).
+  2. When all 3 attempts fail (`D2`), suppress single-timeout TLS/HTTPS noise, emit one `HIGH` `TARGET_UNREACHABLE` finding, and set `state = "INCOMPLETE"`, `grade = "INCOMPLETE"`, and `score = None`.
+  3. Track per-module/check outcomes (`ran`, `skipped`, `failed`) on `TargetScanResult.checks_account` (`D3`).
+  4. When `>20%` of checks on a reachable target are `skipped` or `failed` (`D4`), set `state = "PARTIAL"`, format `score_display` as `~<score> (partial: <ran>/<total> checks ran)`, and exclude the target from the global score average.
+- **Tradeoff**: Unreachable hosts wait ~4–4.8s across 3 retry attempts before being marked `INCOMPLETE`, trading slightly longer scan times on dead hosts for zero single-timeout false positives.

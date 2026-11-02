@@ -6,6 +6,7 @@ import re
 from core.finding import CONFIRMED, HIGH_CONF, INFO, LOW, MEDIUM, NEEDS_MANUAL
 from modules.base import BaseModule
 from modules.headers import EXPECTED_PRESENT, HeaderModule, _dump
+from net.client import make_unreachable_finding
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 PROBE_METHODS = ["OPTIONS", "TRACE", "PUT", "DELETE", "PATCH", "DEBUG"]
@@ -39,6 +40,7 @@ class HttpSecurityModule(BaseModule):
         base = await ctx.http.request("GET", ctx.target.url, allow_redirects=True)
         if not base.ok and base.status == 0:
             ctx.http_unreachable = base.error or "HTTP origin unreachable"
+            out.append(make_unreachable_finding(ctx.target.url, ctx.http_unreachable))
             return out
         ctx.homepage = base
         out += await self._headers(ctx, base)
@@ -93,7 +95,7 @@ class HttpSecurityModule(BaseModule):
         if ctx.target.scheme == "http":
             if not tls_enabled:
                 return out
-            secure = await ctx.http.request("GET", ctx.target.https_url, retry=False)
+            secure = await ctx.http.request("GET", ctx.target.https_url, retry=True)
             if secure.ok and secure.status and secure.status < 400:
                 final = resp.final_url or resp.url
                 if final.lower().startswith("http://"):

@@ -11,6 +11,12 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from core.scope import ScopeGuard
+from net.client import (
+    RETRYABLE_STATUS as _TRANSIENT_STATUS,
+    compute_backoff,
+    parse_retry_after,
+    should_retry_status,
+)
 from paths import validate_response_body
 
 
@@ -86,52 +92,6 @@ def _extract_multi_headers(resp_headers) -> dict[str, list[str]]:
     for k, v in items:
         multi.setdefault(k.lower(), []).append(v)
     return multi
-
-
-_TRANSIENT_STATUS = {408, 429, 500, 502, 503, 504}
-
-
-def should_retry_status(status: int) -> bool:
-    """Return True only for 408, 429, and 5xx responses; never retry other 4xx."""
-    if status in (408, 429):
-        return True
-    if 500 <= status <= 599:
-        return True
-    return False
-
-
-def parse_retry_after(value: str | None) -> float | None:
-    """Parse Retry-After header (delta-seconds or RFC 7231 HTTP-date)."""
-    if not value:
-        return None
-    raw = value.strip()
-    if not raw:
-        return None
-    try:
-        secs = float(raw)
-        return max(0.0, secs)
-    except ValueError:
-        pass
-    try:
-        dt = parsedate_to_datetime(raw)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        delta = (dt - datetime.now(timezone.utc)).total_seconds()
-        return max(0.0, delta)
-    except Exception:
-        return None
-
-
-def compute_backoff(attempt: int, backoff_base: float = 1.6,
-                    retry_after: str | None = None,
-                    max_wait: float = 30.0) -> float:
-    """Exponential backoff with jitter, honouring Retry-After when present."""
-    parsed = parse_retry_after(retry_after)
-    if parsed is not None:
-        return min(parsed, max_wait)
-    exp = (max(1.1, backoff_base) ** attempt) * 0.8
-    jitter = random.uniform(0.05, 0.45 * max(1.0, backoff_base))
-    return min(exp + jitter, max_wait)
 
 
 class HttpClient:

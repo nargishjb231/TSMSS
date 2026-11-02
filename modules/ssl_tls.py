@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from core.finding import CONFIRMED, HIGH_CONF, HIGH, INFO, LOW, MEDIUM, CRITICAL, NEEDS_MANUAL
 from modules.base import BaseModule
+from net.client import fetch_sync, make_unreachable_finding
 
 PROTOCOLS = [
     ("TLSv1.0", ssl.TLSVersion.TLSv1),
@@ -28,6 +29,11 @@ class SslTlsModule(BaseModule):
         host, port = ctx.target.host, ctx.target.port
         chain = await asyncio.get_event_loop().run_in_executor(None, self._fetch_cert, host, port)
         if chain["error"]:
+            if chain.get("transient"):
+                if ctx.target.scheme == "https":
+                    ctx.http_unreachable = chain["error"]
+                    out.append(make_unreachable_finding(ctx.target.url, chain["error"]))
+                return out
             out.append(self.make(
                 ctx, title="TLS handshake with certificate validation failed",
                 severity=HIGH, cwe="CWE-295",
@@ -44,8 +50,9 @@ class SslTlsModule(BaseModule):
         return out
 
     # -- certificate -------------------------------------------------------
-    def _fetch_cert(self, host: str, port: int) -> dict:
-        result = {"error": None, "der": None, "tls": None, "cipher": None}
+    def _fetch_cert_once(self, host: str, port: int) -> dict:
+        result = {"error": None, "der": None, "tls": None, "cipher": None,
+                  "transient": False, "retryable": False}
         ctx = ssl.create_default_context()
         try:
             with socket.create_connection((host, port), timeout=12) as sock:
@@ -57,10 +64,26 @@ class SslTlsModule(BaseModule):
             result["error"] = f"certificate verification: {exc.verify_message}"
             result["verify_code"] = getattr(exc, "verify_code", None)
         except ssl.SSLError as exc:
-            result["error"] = f"TLS error: {exc.reason or exc}"
-        except (socket.timeout, OSError) as exc:
+            msg = str(exc.reason or exc)
+            is_timeout = "timed out" in msg.lower() or "eof" in msg.lower()
+            result["error"] = f"TLS error: {msg}"
+            result["transient"] = is_timeout
+            result["retryable"] = is_timeout
+        except (socket.timeout, TimeoutError, ConnectionResetError, OSError) as exc:
             result["error"] = f"connection: {exc}"
+            result["transient"] = True
+            result["retryable"] = True
         return result
+
+    def _fetch_cert(self, host: str, port: int, attempts: int = 3, sleep_fn=None) -> dict:
+        import time as _time
+        is_local = host in ("127.0.0.1", "localhost", "::1")
+        default_sleep = (lambda _s: _time.sleep(0.01)) if is_local else _time.sleep
+        return fetch_sync(
+            lambda: self._fetch_cert_once(host, port),
+            attempts=attempts,
+            sleep_fn=sleep_fn or default_sleep,
+        )
 
     def _cert_findings(self, ctx, chain: dict) -> list:
         out = []

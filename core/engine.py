@@ -11,6 +11,7 @@ from config import SEVERITY_WEIGHTS
 from core.context import ScanContext, Target
 from core.finding import Finding, score_counts, severity_rank
 from core.logger import get
+from net.client import make_unreachable_finding
 
 log = get("tsmss.engine")
 
@@ -19,12 +20,15 @@ log = get("tsmss.engine")
 class TargetScanResult:
     url: str
     findings: list[Finding] = field(default_factory=list)
-    score: int = 100
+    score: int | None = 100
     grade: str = "A"
     requests: int = 0
     ok: bool = True
     error: str = ""
     elapsed_s: int = 0
+    state: str = "COMPLETE"
+    score_display: str = "100"
+    checks_account: dict = field(default_factory=lambda: {"ran": 0, "skipped": 0, "failed": 0})
 
 MODULE_ORDER = [
     "dns_security", "ssl_tls", "http_security", "reconnaissance", "cookies", "cors",
@@ -128,35 +132,72 @@ class TargetEngine:
                 log.warning("target %s failed: %s\n%s", url, error, traceback.format_exc(limit=3))
 
         findings = _dedupe(findings, self.config.get("scan.min_confidence", ""))
+        unreachable_err = getattr(ctx, "http_unreachable", "")
+        if unreachable_err:
+            if not any(f.title == "TARGET_UNREACHABLE" for f in findings):
+                findings.append(make_unreachable_finding(url, unreachable_err))
+            # Remove single-timeout TLS/HTTPS noise when target is completely unreachable (D2)
+            findings = [
+                f for f in findings
+                if f.title not in ("TLS handshake with certificate validation failed", "HTTPS not available")
+            ]
+
         findings.sort(key=lambda f: (severity_rank(f.severity), f.title))
         value, grade = score(findings)
-        if not error and not findings and getattr(ctx, "http_unreachable", ""):
-            error = getattr(ctx, "http_unreachable")
+        acct = dict(getattr(ctx, "checks_account", {"ran": 0, "skipped": 0, "failed": 0}))
+        ran = acct.get("ran", 0)
+        skipped = acct.get("skipped", 0)
+        failed = acct.get("failed", 0)
+        total = ran + skipped + failed
+
+        state = "COMPLETE"
+        score_display = str(value)
+        final_score: int | None = value
+
+        if unreachable_err:
+            state = "INCOMPLETE"
+            grade = "INCOMPLETE"
+            final_score = None
+            score_display = "INCOMPLETE"
+            if not error:
+                error = unreachable_err
+        elif total > 0 and (skipped + failed) / total > 0.20:
+            state = "PARTIAL"
+            score_display = f"~{value} (partial: {ran}/{total} checks ran)"
+
         elapsed = int(time.monotonic() - started)
         return TargetScanResult(
             url=url,
             findings=findings,
-            score=value,
+            score=final_score,
             grade=grade,
             requests=counter["requests"],
-            ok=not bool(error),
+            ok=(state != "INCOMPLETE" and not bool(error)),
             error=error,
             elapsed_s=elapsed,
+            state=state,
+            score_display=score_display,
+            checks_account=acct,
         )
 
     async def _run_modules(self, ctx, sink: list, timeout: float) -> None:
         for module in self.modules:
             if ctx.stop_event.is_set():
-                return
+                ctx.checks_account["skipped"] = ctx.checks_account.get("skipped", 0) + 1
+                continue
             if getattr(ctx, "http_unreachable", "") and getattr(module, "needs_http", True):
+                ctx.checks_account["skipped"] = ctx.checks_account.get("skipped", 0) + 1
                 continue
             try:
                 result = await asyncio.wait_for(module.run(ctx), timeout=timeout)
+                ctx.checks_account["ran"] = ctx.checks_account.get("ran", 0) + 1
             except asyncio.TimeoutError:
                 log.info("module %s timed out on %s", module.name, ctx.target.url)
+                ctx.checks_account["failed"] = ctx.checks_account.get("failed", 0) + 1
                 continue
             except Exception as exc:  # noqa: BLE001
                 log.info("module %s errored on %s: %s", module.name, ctx.target.url, exc)
+                ctx.checks_account["failed"] = ctx.checks_account.get("failed", 0) + 1
                 continue
             for finding in result or []:
                 if not finding.url:
