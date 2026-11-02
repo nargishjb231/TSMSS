@@ -29,6 +29,63 @@ TAKEOVER_FINGERPRINTS = {
 }
 
 
+def canonicalize_subdomain(name: str, apex: str = "") -> str:
+    """I1: Lowercase, strip trailing dot, collapse repeated prefixes (www.www., mail.mail., www.admin. -> admin.)."""
+    clean = (name or "").strip().lower().rstrip(".")
+    if not clean:
+        return ""
+    apex_clean = (apex or "").strip().lower().rstrip(".")
+    if apex_clean and clean.endswith("." + apex_clean):
+        prefix = clean[: -(len(apex_clean) + 1)]
+        tail = apex_clean
+    else:
+        parts = clean.split(".")
+        if len(parts) <= 2:
+            return clean
+        prefix = ".".join(parts[:-2])
+        tail = ".".join(parts[-2:])
+
+    labels = [lbl for lbl in prefix.split(".") if lbl]
+    # Collapse consecutive identical labels (e.g., www.www -> www, mail.mail -> mail)
+    deduped_labels: list[str] = []
+    for lbl in labels:
+        if not deduped_labels or deduped_labels[-1] != lbl:
+            deduped_labels.append(lbl)
+
+    # Collapse leading 'www.' when followed by another subdomain label (e.g. www.admin. -> admin.)
+    while len(deduped_labels) >= 2 and deduped_labels[0] == "www":
+        deduped_labels.pop(0)
+
+    if not deduped_labels:
+        return tail
+    return ".".join(deduped_labels) + "." + tail
+
+
+def dedupe_subdomains(
+    entries: dict[str, list[str]] | list[tuple[str, list[str]]],
+    apex: str = "",
+) -> list[tuple[str, tuple[str, ...]]]:
+    """I2: Dedupe subdomain records by `(canonical_name, resolved_ip_set)` before emitting."""
+    items = entries.items() if isinstance(entries, dict) else entries
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    seen_names: set[str] = set()
+    out: list[tuple[str, tuple[str, ...]]] = []
+    for raw_name, ips in items:
+        canon = canonicalize_subdomain(raw_name, apex=apex)
+        if not canon:
+            continue
+        ip_tuple = tuple(sorted({str(ip).strip() for ip in (ips or []) if str(ip).strip()}))
+        if not ip_tuple:
+            continue
+        key = (canon, ip_tuple)
+        if key in seen or canon in seen_names:
+            continue
+        seen.add(key)
+        seen_names.add(canon)
+        out.append((canon, ip_tuple))
+    return out
+
+
 class DnsSecurityModule(BaseModule):
     name = "dns_security"
     category = "DNS Security"
@@ -274,13 +331,20 @@ class DnsSecurityModule(BaseModule):
     async def _subdomains(self, r, ctx, host, out):
         apex = await self._apex(r, host)
         words = ctx.config.get("dns.subdomain_wordlist", [])[:30]
-        tasks = {f"{w}.{apex}": R.query(r, f"{w}.{apex}", "A") for w in words}
-        found = []
+        candidates: list[str] = []
+        for w in words:
+            c = canonicalize_subdomain(f"{w}.{apex}", apex=apex)
+            if c and c not in candidates:
+                candidates.append(c)
+        tasks = {c: R.query(r, c, "A") for c in candidates}
+        raw_hits: list[tuple[str, list[str]]] = []
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         for name, res in zip(tasks.keys(), results):
             if isinstance(res, list) and res:
-                found.append(f"{name} -> {res[0]}")
-        ctx.subdomains = [f.split(" -> ")[0] for f in found]
+                raw_hits.append((name, res))
+        deduped = dedupe_subdomains(raw_hits, apex=apex)
+        found = [f"{canon} -> {', '.join(ips)}" for canon, ips in deduped]
+        ctx.subdomains = [canon for canon, _ in deduped]
         if found:
             out.append(self.make(
                 ctx, title=f"{len(found)} subdomain(s) discovered passively",

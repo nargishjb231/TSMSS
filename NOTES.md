@@ -70,3 +70,10 @@
   3. Filter `arjun` lines to drop any line containing `Progress` and match `^\[\+\].*[A-Za-z0-9_-]+$` (`H3`).
   4. Parse `ffuf` `results[]` JSON entries into `<path> [<status>]` findings with `{url, status, length, words}`, dropping `commandline`/temp paths and deduplicating against `ctx.seen_paths` (`H4`).
 - **Tradeoff**: Non-standard custom forks of `wafw00f` or `arjun` that change their `[+]`/`[-]` output prefix will be ignored rather than emitting raw unparsed stdout lines.
+
+## Item I — Subdomain Canonicalization & Deduplication
+- **Root Cause**: Subdomain discovery previously emitted nested/redundant prefixes (`mail.mail.`, `www.admin.`, `www.www.`) and duplicate records without normalizing names or resolved IP sets.
+- **Detection Decision**:
+  1. Canonicalize subdomain candidates via `canonicalize_subdomain()` (`I1`): lowercase, strip trailing dot, collapse consecutive identical labels (`mail.mail.` -> `mail.`), and strip leading `www.` when followed by another subdomain label (`www.admin.` -> `admin.`).
+  2. Deduplicate resolved entries by `(canonical_name, resolved_ip_set)` (`I2`) prior to emitting findings.
+- **Tradeoff**: Intentional multi-level `www.<sublabel>.<apex>` hosts are collapsed to `<sublabel>.<apex>`, eliminating recursive prefix noise on wildcard/CNAME zones.

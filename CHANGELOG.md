@@ -47,3 +47,7 @@
 - Added `parse_wafw00f_output()` keeping only `^\[\+\].*behind.*WAF` (1 finding) or `^\[-\].*No WAF` (1 `INFO` `"no WAF"` finding) and dropping all ASCII banner lines.
 - Added `parse_arjun_output()` dropping `Progress` status lines and keeping only `^\[\+\].*[A-Za-z0-9_-]+$`.
 - Added `parse_ffuf_output()` parsing the JSON `results[]` array into `<path> [<status>]` findings with `url`, `status`, `length`, and `words`, stripping `commandline`/local temp paths, and cross-deduping against `ctx.seen_paths`.
+
+### Item I — Subdomain canonicalization and IP-set deduplication
+- Added `canonicalize_subdomain()` in `modules/dns_security.py` lowercasing, stripping trailing dots, and collapsing repeated prefixes (`www.www.`, `mail.mail.`, `www.admin.` -> `admin.`).
+- Added `dedupe_subdomains()` deduplicating discovered subdomains by `(canonical_name, resolved_ip_set)` before emitting findings.
