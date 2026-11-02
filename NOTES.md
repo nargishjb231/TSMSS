@@ -130,3 +130,12 @@
   3. Both absent -> emit `LOW` `"DNSSEC not enabled"`.
   4. Both present -> verify `DS` SHA-1/SHA-256/SHA-384 digest against the wire-format `DNSKEY`; mismatch -> `HIGH` `"Broken DNSSEC delegation (DS digest mismatch)"`.
 - **Tradeoff**: None; `DNSKEY` and `DS` are already queried per apex domain.
+
+## Item P — TLS Protocol, Cipher, Certificate & CAA Policy
+- **Root Cause**: 18 of 19 targets accepted TLS 1.0/1.1 and lacked CAA records (a systemic hoster/CDN pattern rather than an isolated target quirk), expired certificates were previously scored `CRITICAL` instead of `HIGH`, and wildcard SAN blast radius was unreported.
+- **Detection Decision**:
+  1. Probe TLS 1.0, 1.1, 1.2, 1.3 via `ssl.SSLContext` (`P1`). Flag TLS 1.0/1.1 as `MEDIUM` per host and emit a `MEDIUM` Systemic Finding when `>70%` of scanned targets accept it (`P2`).
+  2. Flag `RC4`/`3DES`/`NULL`/`EXPORT` ciphers as `MEDIUM` and non-AEAD TLS 1.2 ciphers as `LOW` (`P3`).
+  3. Enforce `RSA < 2048` -> `MEDIUM`, `ECDSA 256` -> OK, expiry `<30d` -> `LOW`, `<7d` -> `MEDIUM`, expired -> `HIGH` (`P4`), and wildcard SAN (`*.domain`) -> `INFO` `"Wildcard certificate, subdomain takeover blast radius"` (`P5`).
+  4. Flag absent CAA as `LOW` per host + `LOW` Systemic Finding when `>70%` of targets lack it, and parse `issue`/`issuewild`/`iodef` (`P6`).
+- **Tradeoff**: Systemic aggregation requires `>=2` targets in a scan batch to exceed the `70%` threshold meaningfully.

@@ -321,6 +321,83 @@ def evaluate_dnssec(
     ]
 
 
+def evaluate_caa(
+    caa_records: list[str],
+    *,
+    apex: str = "example.com",
+    target_url: str = "https://example.com/",
+) -> list[Finding]:
+    """P6: CAA absent -> LOW; CAA present -> parse issue/issuewild/iodef, flag permissive/wildcard issue."""
+    if not caa_records:
+        return [
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="No CAA record restricts certificate issuance",
+                severity=LOW,
+                cwe="CWE-295",
+                confidence=CONFIRMED,
+                description="Any public CA may issue certificates for this domain, widening the blast radius of mis-issuance.",
+                evidence=f"dig {apex} CAA -> (empty)",
+                detection_method="CAA query",
+                remediation="Publish CAA authorising only the CAs in use, plus iodef.",
+                tags=["dns", "caa"],
+            )
+        ]
+
+    out: list[Finding] = []
+    permissive: list[str] = []
+    for raw in caa_records:
+        # Format: <flags> <tag> "<value>"
+        m = re.match(r"^\s*(\d+)\s+(issue|issuewild|iodef)\s+[\"']?(.*?)[\"']?\s*$", raw, re.I)
+        if m:
+            tag = m.group(2).lower()
+            val = m.group(3).strip()
+            if tag in ("issue", "issuewild") and val in ("*", "", "; ;"):
+                permissive.append(raw)
+        elif "*" in raw:
+            permissive.append(raw)
+
+    if permissive:
+        out.append(
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="Permissive CAA record does not restrict certificate issuance",
+                severity=MEDIUM,
+                cwe="CWE-295",
+                confidence=CONFIRMED,
+                description="A CAA issue/issuewild directive is empty or wildcarded, failing to restrict CA issuance.",
+                evidence="\n".join(permissive),
+                detection_method="CAA directive parser",
+                remediation="Specify explicit CA domain names in CAA issue and issuewild records.",
+                tags=["dns", "caa"],
+            )
+        )
+    else:
+        out.append(
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="CAA policy published",
+                severity=INFO,
+                confidence=CONFIRMED,
+                description=f"CAA: {'; '.join(caa_records[:5])}",
+                evidence="\n".join(caa_records),
+                detection_method="CAA query",
+                remediation="Review the authorised CA list periodically.",
+                tags=["dns", "caa"],
+            )
+        )
+    return out
+
+
 class DnsSecurityModule(BaseModule):
     name = "dns_security"
     category = "DNS Security"
@@ -626,23 +703,7 @@ class DnsSecurityModule(BaseModule):
     async def _caa(self, r, ctx, host, out):
         apex = await self._apex(r, host)
         caa = await R.query(r, apex, "CAA")
-        if not caa:
-            out.append(self.make(
-                ctx, title="No CAA record restricts certificate issuance",
-                severity=LOW, cwe="CWE-295",
-                description="Any public CA may issue for this domain, widening the blast "
-                            "radius of a mis-issuance.",
-                evidence=f"dig {apex} CAA -> (empty)",
-                detection_method="CAA query", confidence=CONFIRMED,
-                remediation="Publish CAA authorising only the CAs in use, plus iodef.",
-                tags=["dns", "caa"]))
-        else:
-            out.append(self.make(
-                ctx, title="CAA policy published",
-                severity=INFO, description=f"CAA: {'; '.join(caa[:5])}",
-                evidence="\n".join(caa), detection_method="CAA query",
-                confidence=CONFIRMED, remediation="Review the authorised CA list.",
-                tags=["dns", "caa"]))
+        out.extend(evaluate_caa(caa, apex=apex, target_url=ctx.target.url))
 
     async def _dangling(self, r, ctx, host, out):
         chain = await R.resolve_chain(r, host)

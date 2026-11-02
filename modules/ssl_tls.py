@@ -6,7 +6,7 @@ import socket
 import ssl
 from datetime import datetime, timezone
 
-from core.finding import CONFIRMED, HIGH_CONF, HIGH, INFO, LOW, MEDIUM, CRITICAL, NEEDS_MANUAL
+from core.finding import CONFIRMED, HIGH_CONF, HIGH, INFO, LOW, MEDIUM, CRITICAL, NEEDS_MANUAL, Finding
 from modules.base import BaseModule
 from net.client import fetch_sync, make_unreachable_finding
 
@@ -18,6 +18,57 @@ PROTOCOLS = [
 ]
 
 WEAK = {"TLSv1.0", "TLSv1.1"}
+WEAK_CIPHER_TOKENS = ("RC4", "3DES", "DES-CBC3", "NULL", "EXPORT", "EXP-")
+AEAD_TOKENS = ("GCM", "CHACHA20", "CCM", "POLY1305")
+
+
+def evaluate_cipher_name(
+    cipher_name: str,
+    tls_version: str = "TLSv1.2",
+    target_url: str = "https://example.com/",
+) -> list[Finding]:
+    """P3: Ciphers: RC4/3DES/NULL/EXPORT -> MEDIUM; no AEAD in TLS 1.2 -> LOW."""
+    if not cipher_name:
+        return []
+    up = cipher_name.upper()
+    out: list[Finding] = []
+    if any(tok in up for tok in WEAK_CIPHER_TOKENS):
+        out.append(
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="SSL/TLS Security",
+                module="ssl_tls",
+                title=f"Weak cipher suite negotiated ({cipher_name})",
+                severity=MEDIUM,
+                cwe="CWE-327",
+                confidence=CONFIRMED,
+                description=f"Cipher suite '{cipher_name}' uses a broken or deprecated primitive (RC4/3DES/NULL/EXPORT).",
+                evidence=f"version={tls_version} cipher={cipher_name}",
+                detection_method="TLS cipher inspection",
+                remediation="Disable RC4, 3DES, NULL, and EXPORT cipher suites.",
+                tags=["tls", "cipher"],
+            )
+        )
+    elif tls_version == "TLSv1.2" and not any(tok in up for tok in AEAD_TOKENS):
+        out.append(
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="SSL/TLS Security",
+                module="ssl_tls",
+                title=f"Non-AEAD cipher negotiated in TLS 1.2 ({cipher_name})",
+                severity=LOW,
+                cwe="CWE-327",
+                confidence=CONFIRMED,
+                description=f"TLS 1.2 negotiated '{cipher_name}' without AEAD (GCM/CHACHA20/CCM) authentication.",
+                evidence=f"version={tls_version} cipher={cipher_name}",
+                detection_method="TLS 1.2 AEAD cipher check",
+                remediation="Prefer ECDHE-RSA-AES128-GCM-SHA256, ECDHE-RSA-AES256-GCM-SHA384, or CHACHA20-POLY1305.",
+                tags=["tls", "cipher", "aead"],
+            )
+        )
+    return out
 
 
 class SslTlsModule(BaseModule):
@@ -45,6 +96,12 @@ class SslTlsModule(BaseModule):
                 tags=["tls", "certificate"]))
         else:
             out += self._cert_findings(ctx, chain)
+            if chain.get("cipher"):
+                out += evaluate_cipher_name(
+                    chain["cipher"],
+                    tls_version=chain.get("tls") or "TLSv1.2",
+                    target_url=ctx.target.url,
+                )
         out += await self._protocols(ctx, host, port)
         out += await self._cipher_summary(ctx, host, port)
         return out
@@ -97,16 +154,16 @@ class SslTlsModule(BaseModule):
             if days < 0:
                 out.append(self.make(
                     ctx, title="TLS certificate has expired",
-                    severity=CRITICAL, cwe="CWE-298",
+                    severity=HIGH, cwe="CWE-298",
                     description=f"Certificate expired {-days} days ago.",
                     evidence=f"notAfter={not_after.isoformat()} subject={info.get('subject')}",
                     detection_method="Certificate validity check", confidence=CONFIRMED,
                     remediation="Renew and redeploy the certificate immediately.",
                     tags=["tls", "certificate"]))
-            elif days <= 30:
+            elif days < 30:
                 out.append(self.make(
                     ctx, title=f"TLS certificate expires in {days} days",
-                    severity=MEDIUM if days <= 7 else LOW, cwe="CWE-298",
+                    severity=MEDIUM if days < 7 else LOW, cwe="CWE-298",
                     description="Expiry is imminent; renewal automation appears absent.",
                     evidence=f"notAfter={not_after.isoformat()}",
                     detection_method="Certificate validity check", confidence=CONFIRMED,
@@ -129,6 +186,19 @@ class SslTlsModule(BaseModule):
                 detection_method="SAN comparison", confidence=CONFIRMED,
                 remediation="Reissue the certificate with the correct SAN entries.",
                 tags=["tls", "certificate"]))
+        wildcard_sans = [s for s in sans if str(s).startswith("*.")]
+        if wildcard_sans:
+            out.append(self.make(
+                ctx,
+                title="Wildcard certificate, subdomain takeover blast radius",
+                severity=INFO,
+                cwe="CWE-295",
+                description="Certificate includes wildcard SAN(s), increasing the blast radius if any subdomain is compromised.",
+                evidence=f"Wildcard SAN(s): {', '.join(wildcard_sans[:10])}",
+                detection_method="Certificate SAN inspection",
+                confidence=CONFIRMED,
+                remediation="Consider scoping certificates to explicit hostnames for high-value services.",
+                tags=["tls", "certificate", "wildcard"]))
         issuer = info.get("issuer", "")
         if issuer:
             out.append(self.make(
@@ -140,7 +210,8 @@ class SslTlsModule(BaseModule):
                 remediation="Track the issuing CA for revocation and renewal SLAs.",
                 tags=["tls", "inventory"]))
         bits = info.get("key_bits")
-        family = info.get("key_family", "")
+        family = (info.get("key_family") or "").lower()
+        # P4: RSA < 2048 -> MEDIUM; ECDSA 256 -> OK (never flag)
         if family == "rsa" and bits and bits < 2048:
             out.append(self.make(
                 ctx, title=f"Certificate key length is {bits} bits",
