@@ -78,3 +78,10 @@
 - Added full DMARC tag parser (`p`, `sp`, `pct`, `adkim`, `aspf`, `rua`, `ruf`): `p=none` -> `LOW`, `p=quarantine` with `pct<100` -> `LOW`, `sp=none` when `p=reject` -> `LOW`, and external `rua=`/`ruf=` domains -> `LOW` `"DMARC reports go to third party"`.
 - Added MX anomaly checks for priority `0` outside the registrable domain and Cloudflare synthetic `_dc-mx.*` records (`LOW` origin-IP disclosure risk).
 - Flagged domains with neither `MX` nor `SPF` as `MEDIUM` `"Domain sends no mail, spoofable"` (`remediation: v=spf1 -all`).
+
+### Item O — DNSSEC chain-of-trust validation (`DNSKEY` + parent `DS`)
+- Added `evaluate_dnssec()` and `_verify_ds_matches_dnskey()` in `modules/dns_security.py`:
+  - `DNSKEY` present, `DS` absent -> `MEDIUM` `"DNSSEC island of trust (DNSKEY without DS)"` (1 finding).
+  - `DS` present, `DNSKEY` absent -> `HIGH` `"Broken DNSSEC delegation"`.
+  - Both absent -> `LOW` `"DNSSEC not enabled"`.
+  - Both present -> validates parent `DS` digest against `DNSKEY` wire format (`HIGH` on mismatch).

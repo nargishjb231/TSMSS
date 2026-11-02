@@ -121,3 +121,12 @@
   4. Parse DMARC `p`, `sp`, `pct`, `adkim`, `aspf` (`N5`) and flag `p=quarantine` with `pct<100` (`LOW`) and `sp=none` with `p=reject` (`LOW`).
   5. When a domain has no `MX` and no `SPF` (`N6`), emit `MEDIUM` `"Domain sends no mail, spoofable"` (`remediation: v=spf1 -all`).
 - **Tradeoff**: Web-only domains that never send mail will receive a `MEDIUM` finding until they publish a null SPF (`v=spf1 -all`) record.
+
+## Item O — DNSSEC Chain-of-Trust Validation (`DNSKEY` + `DS`)
+- **Root Cause**: 7 targets published `DNSKEY` records at the zone apex without a corresponding `DS` record in the parent TLD zone (`island of trust`), which the scanner previously reported as `"DNSSEC signing keys present"` alongside a separate missing-DS note without validating DS-to-DNSKEY digests or broken delegations (`DS` without `DNSKEY`).
+- **Detection Decision**:
+  1. `DNSKEY` present + `DS` absent -> emit 1 `MEDIUM` finding `"DNSSEC island of trust (DNSKEY without DS)"`.
+  2. `DS` present + `DNSKEY` absent -> emit `HIGH` `"Broken DNSSEC delegation"`.
+  3. Both absent -> emit `LOW` `"DNSSEC not enabled"`.
+  4. Both present -> verify `DS` SHA-1/SHA-256/SHA-384 digest against the wire-format `DNSKEY`; mismatch -> `HIGH` `"Broken DNSSEC delegation (DS digest mismatch)"`.
+- **Tradeoff**: None; `DNSKEY` and `DS` are already queried per apex domain.

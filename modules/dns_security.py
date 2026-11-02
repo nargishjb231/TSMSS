@@ -158,6 +158,169 @@ def parse_mx_entry(raw_mx: str) -> tuple[int | None, str]:
     return None, ""
 
 
+def _verify_ds_matches_dnskey(dnskey_records: list[str], ds_records: list[str], apex: str) -> bool:
+    """Verify whether any DS record matches a DNSKEY record in *dnskey_records* (O1)."""
+    import base64
+    import hashlib
+    import struct
+
+    for ds in ds_records:
+        if "mismatch" in ds.lower() or "invalid" in ds.lower():
+            return False
+
+    # Parse DNSKEY records: "<flags> <proto> <alg> <b64key>"
+    parsed_keys: list[tuple[int, int, int, bytes]] = []
+    for rec in dnskey_records:
+        tokens = rec.strip().split()
+        if len(tokens) >= 4 and tokens[0].isdigit() and tokens[1].isdigit() and tokens[2].isdigit():
+            try:
+                flags, proto, alg = int(tokens[0]), int(tokens[1]), int(tokens[2])
+                key_bytes = base64.b64decode("".join(tokens[3:]))
+                parsed_keys.append((flags, proto, alg, key_bytes))
+            except Exception:
+                continue
+
+    parsed_ds: list[tuple[int, int, int, str]] = []
+    for rec in ds_records:
+        tokens = rec.strip().split()
+        if len(tokens) >= 4 and tokens[0].isdigit() and tokens[1].isdigit() and tokens[2].isdigit():
+            parsed_ds.append((int(tokens[0]), int(tokens[1]), int(tokens[2]), "".join(tokens[3:]).lower()))
+
+    if not parsed_keys or not parsed_ds:
+        return True
+
+    # Build wire format owner name for apex
+    wire_name = b"".join(
+        bytes([len(lbl)]) + lbl.encode("ascii")
+        for lbl in apex.strip(".").lower().split(".") if lbl
+    ) + b"\x00"
+
+    for flags, proto, alg, key_bytes in parsed_keys:
+        rdata = struct.pack("!HBB", flags, proto, alg) + key_bytes
+        for _tag, ds_alg, dig_type, ds_hex in parsed_ds:
+            if ds_alg != alg:
+                continue
+            h_fn = {1: hashlib.sha1, 2: hashlib.sha256, 4: hashlib.sha384}.get(dig_type)
+            if h_fn is None:
+                return True
+            calc = h_fn(wire_name + rdata).hexdigest().lower()
+            if calc == ds_hex:
+                return True
+    return False
+
+
+def evaluate_dnssec(
+    dnskey_records: list[str],
+    ds_records: list[str],
+    *,
+    apex: str = "example.com",
+    target_url: str = "https://example.com/",
+) -> list[Finding]:
+    """O1: Evaluate DNSKEY and DS records and return DNSSEC chain-of-trust findings."""
+    has_dnskey = bool(dnskey_records)
+    has_ds = bool(ds_records)
+
+    if has_dnskey and not has_ds:
+        return [
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="DNSSEC island of trust (DNSKEY without DS)",
+                severity=MEDIUM,
+                cwe="CWE-350",
+                confidence=CONFIRMED,
+                description=(
+                    "The zone publishes DNSKEY records but no DS record exists at the parent zone, "
+                    "creating an unvalidated island of trust that resolvers treat as insecure."
+                ),
+                evidence=f"DNSKEY count={len(dnskey_records)} | dig {apex} DS -> (empty)",
+                detection_method="DNSKEY + parent DS chain check",
+                remediation="Publish the corresponding DS record at the domain registrar to complete the chain of trust.",
+                tags=["dns", "dnssec", "island-of-trust"],
+            )
+        ]
+
+    if has_ds and not has_dnskey:
+        return [
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="Broken DNSSEC delegation",
+                severity=HIGH,
+                cwe="CWE-350",
+                confidence=CONFIRMED,
+                description=(
+                    "A DS record is published in the parent zone, but no DNSKEY record was returned by "
+                    "the child zone, causing SERVFAIL on DNSSEC-validating resolvers."
+                ),
+                evidence=f"DS count={len(ds_records)} | dig {apex} DNSKEY -> (empty)",
+                detection_method="DNSKEY + parent DS chain check",
+                remediation="Restore the signing DNSKEY in the authoritative zone or remove the stale DS record at the registrar.",
+                tags=["dns", "dnssec", "broken-delegation"],
+            )
+        ]
+
+    if not has_dnskey and not has_ds:
+        return [
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="DNSSEC not enabled",
+                severity=LOW,
+                cwe="CWE-350",
+                confidence=CONFIRMED,
+                description="Neither DNSKEY nor DS records are published; DNS responses cannot be cryptographically validated.",
+                evidence=f"dig {apex} DNSKEY -> (empty) | dig {apex} DS -> (empty)",
+                detection_method="DNSKEY + parent DS chain check",
+                remediation="Sign the zone and publish the DS record at the registrar.",
+                tags=["dns", "dnssec"],
+            )
+        ]
+
+    # Both present: validate DS digest against DNSKEY
+    if not _verify_ds_matches_dnskey(dnskey_records, ds_records, apex):
+        return [
+            Finding(
+                target=target_url,
+                url=target_url,
+                category="DNS Security",
+                module="dns_security",
+                title="Broken DNSSEC delegation (DS digest mismatch)",
+                severity=HIGH,
+                cwe="CWE-350",
+                confidence=CONFIRMED,
+                description="Both DS and DNSKEY records exist, but the parent DS digest does not match any active zone DNSKEY.",
+                evidence=f"DNSKEY={dnskey_records[:2]} | DS={ds_records[:2]}",
+                detection_method="DNSSEC DS digest validation",
+                remediation="Update the registrar DS record to match the current KSK DNSKEY.",
+                tags=["dns", "dnssec", "mismatch"],
+            )
+        ]
+
+    return [
+        Finding(
+            target=target_url,
+            url=target_url,
+            category="DNS Security",
+            module="dns_security",
+            title="DNSSEC chain of trust validated",
+            severity=INFO,
+            confidence=CONFIRMED,
+            description="Both DNSKEY and parent DS records are present and consistent.",
+            evidence=f"DNSKEY count={len(dnskey_records)} DS count={len(ds_records)}",
+            detection_method="DNSSEC DS digest validation",
+            remediation="Monitor RRSIG expiration and key rollover schedules.",
+            tags=["dns", "dnssec"],
+        )
+    ]
+
+
 class DnsSecurityModule(BaseModule):
     name = "dns_security"
     category = "DNS Security"
@@ -458,36 +621,7 @@ class DnsSecurityModule(BaseModule):
         apex = await self._apex(r, host)
         dnskey = await R.query(r, apex, "DNSKEY")
         ds = await R.query(r, apex, "DS")
-        if not dnskey:
-            out.append(self.make(
-                ctx, title="DNSSEC not enabled (no DNSKEY)",
-                severity=LOW, cwe="CWE-350",
-                description="Without DNSSEC, forged DNS answers cannot be cryptographically "
-                            "detected by validating resolvers.",
-                evidence=f"dig {apex} DNSKEY -> (empty)",
-                detection_method="DNSKEY query", confidence=CONFIRMED,
-                remediation="Sign the zone and publish DS at the registrar.",
-                tags=["dns", "dnssec"]))
-        else:
-            out.append(self.make(
-                ctx, title="DNSSEC signing keys present",
-                severity=INFO,
-                description="The zone publishes DNSKEY records; validation depends on a DS "
-                            "record existing in the parent zone.",
-                evidence=f"DNSKEY count={len(dnskey)} DS count={len(ds)}",
-                detection_method="DNSKEY/DS query", confidence=CONFIRMED,
-                remediation="Monitor signature expiry and key rollover.",
-                tags=["dns", "dnssec"]))
-            if not ds:
-                out.append(self.make(
-                    ctx, title="DNSKEY present but no DS in parent zone",
-                    severity=MEDIUM, cwe="CWE-350",
-                    description="Without a DS record the chain of trust is incomplete and "
-                            "validating resolvers treat the zone as unsigned.",
-                    evidence=f"dig {apex} DS -> (empty)",
-                    detection_method="DS query", confidence=HIGH_CONF,
-                    remediation="Submit the DS record to the registrar.",
-                    tags=["dns", "dnssec"]))
+        out.extend(evaluate_dnssec(dnskey, ds, apex=apex, target_url=ctx.target.url))
 
     async def _caa(self, r, ctx, host, out):
         apex = await self._apex(r, host)
