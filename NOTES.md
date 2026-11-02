@@ -86,3 +86,12 @@
   3. Classify ports `8080`/`8443` on `CF_PROXIED` hosts as `INFO` (`"edge port"`), raising `LOW`/`MEDIUM` only on `CF_DNS_ONLY` or `DIRECT` origins (`J4`).
   4. Suppress `/wp-admin/`, `/wp-content/`, `/wp-includes/`, and `/wp-json/` in `robots.txt` (`J5`), emitting `INFO` if no other sensitive disallow rules remain.
 - **Tradeoff**: A single `CRITICAL` on one target in a multi-target batch pulls the batch global score down to that target's score (`min`), ensuring critical exposures can never be masked by clean sibling hosts.
+
+## Item K — Report Splitting, Single Header Dump & Verification Sections
+- **Root Cause**: Multi-target Markdown reports truncated at 400k chars mid-finding, and repeating the full HTTP response header block inside every missing-header finding accounted for ~60% of total report size.
+- **Detection Decision**:
+  1. Split Markdown reports at `100,000` characters on finding/section boundaries (`\n### ` / `\n## `) into `report_<ts>_<n>.md` with an `index.md` (`K1`).
+  2. Emit the response header block once per target under the target heading and reference only `Header: <name>` on individual missing-header findings (`K2`).
+  3. Include `schema_version`, `confidence`, `cwe`, `cvss`, `evidence_hash`, `first_seen`, `last_seen`, `edge`, and `check_outcome` on every JSON finding (`K3`).
+  4. Render per-target `"Verification"` sections separating machine-confirmed findings from `NEEDS MANUAL VERIFICATION` (`K4`).
+- **Tradeoff**: Individual missing-header finding snippets show the absent header name rather than duplicating the entire 30-line HTTP response header block on every card.

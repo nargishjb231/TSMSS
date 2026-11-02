@@ -57,10 +57,12 @@ class HeaderModule(BaseModule):
         rule = self.rule(header)
         if not rule:
             return None
+        if hasattr(ctx, "__dict__") and getattr(ctx, "target_header_block", None) is None:
+            ctx.target_header_block = _dump(resp.headers)
         return self.make(
             ctx, title=rule["title"], severity=rule["severity"], cwe=rule.get("cwe"),
             description=rule["description"],
-            evidence=f"Response headers for {resp.url}:\n" + _dump(resp.headers),
+            evidence=f"Header: {header} (absent from {resp.url} response headers)",
             detection_method="Response header inspection",
             confidence=CONFIRMED, remediation=rule.get("remediation", ""),
             tags=["headers", header],

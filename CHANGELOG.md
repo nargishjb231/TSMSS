@@ -57,3 +57,9 @@
 - Added `score_breakdown()` returning the per-severity weight/deduction table.
 - Updated `modules/infrastructure.py` (`classify_port_severity`) to classify ports `8080`/`8443` on Cloudflare-proxied hosts as `INFO` (`"edge port"`) and `LOW`/`MEDIUM` only when origin is exposed.
 - Updated `modules/reconnaissance.py` to suppress standard WordPress `robots.txt` entries (`/wp-admin/`, `/wp-content/`, `/wp-includes/`, `/wp-json/`), emitting `INFO` when no other sensitive disallow paths remain.
+
+### Item K — Report splitting, single response-header block per target, JSON schema fields, and per-target Verification sections
+- Added `split_markdown_chunks()` in `core/report_manager.py` splitting Markdown reports at `100,000` characters on finding/section boundaries into `report_<ts>_<n>.md` plus `index.md`, never truncating mid-finding.
+- Updated `modules/headers.py` and `core/report_manager.py` to emit the response header block once per target under the target heading while individual header findings reference the header name only.
+- Added `schema_version`, `confidence`, `cwe`, `cvss`, `evidence_hash`, `first_seen`, `last_seen`, `edge`, and `check_outcome` to every JSON finding object.
+- Added per-target `"Verification"` sections in Markdown reports splitting machine-confirmed findings from `NEEDS MANUAL VERIFICATION`.

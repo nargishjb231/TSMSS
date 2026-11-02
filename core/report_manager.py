@@ -14,7 +14,7 @@ from typing import Any
 
 from ai.packager import build_ai_upload_package
 from config import SEVERITY_ORDER, SEVERITY_WEIGHTS
-from core.finding import Finding, score_counts, severity_rank
+from core.finding import Finding, compute_global_score, score_breakdown, score_counts, severity_rank
 from core.verification import map_confidence_to_verification
 
 SCORE_METHOD = """Each severity contributes a saturating deduction
@@ -62,6 +62,58 @@ def _trim_evidence(text, limit: int = 700) -> str:
     """Header dumps are long and repeated; keep a bounded slice."""
     text = str(text or "")
     return text if len(text) <= limit else text[:limit] + "\n...[truncated]"
+
+
+def split_markdown_chunks(markdown_text: str, max_chars: int = 100_000) -> list[str]:
+    """K1: Split Markdown into chunks <= *max_chars* on finding/section boundaries, never mid-finding."""
+    if len(markdown_text) <= max_chars:
+        return [markdown_text]
+    blocks = re.split(r"(?=\n### |\n## )", markdown_text)
+    chunks: list[str] = []
+    cur = ""
+    for block in blocks:
+        if cur and len(cur) + len(block) > max_chars:
+            chunks.append(cur)
+            cur = block.lstrip("\n")
+        else:
+            cur += block
+    if cur:
+        chunks.append(cur)
+    return chunks or [markdown_text]
+
+
+def compute_systemic_findings(findings_by_target: dict[str, list[dict]]) -> list[dict[str, Any]]:
+    """P2 & P6: Emit systemic aggregate findings when >70% of targets share TLS 1.0/1.1 or missing CAA."""
+    total_targets = len(findings_by_target)
+    if total_targets == 0:
+        return []
+    tls_weak_hosts: list[str] = []
+    caa_missing_hosts: list[str] = []
+    for tgt, rows in findings_by_target.items():
+        titles = " | ".join(str(r.get("title") or "") for r in rows).lower()
+        if "tlsv1.0" in titles or "tlsv1.1" in titles or "deprecated tls" in titles:
+            tls_weak_hosts.append(tgt)
+        if "no caa record" in titles or "caa record absent" in titles:
+            caa_missing_hosts.append(tgt)
+
+    systemic: list[dict[str, Any]] = []
+    if len(tls_weak_hosts) / total_targets > 0.70:
+        systemic.append({
+            "title": "Systemic finding: >70% of assessed hosts accept deprecated TLS 1.0/1.1",
+            "severity": "MEDIUM",
+            "affected_count": len(tls_weak_hosts),
+            "total_targets": total_targets,
+            "hosts": tls_weak_hosts,
+        })
+    if len(caa_missing_hosts) / total_targets > 0.70:
+        systemic.append({
+            "title": "Systemic finding: >70% of assessed zones lack CAA records",
+            "severity": "LOW",
+            "affected_count": len(caa_missing_hosts),
+            "total_targets": total_targets,
+            "hosts": caa_missing_hosts,
+        })
+    return systemic
 
 
 def _counts(rows: list[dict]) -> dict:
@@ -133,6 +185,14 @@ def _normalize_finding_row(raw: dict[str, Any] | Finding, default_target: str = 
             impact=str(raw.get("impact") or ""),
             false_positive_notes=str(raw.get("false_positive_notes") or ""),
             test_id=str(raw.get("test_id") or ""),
+            edge=bool(raw.get("edge", False)),
+            csp_source=str(raw.get("csp_source") or ""),
+            check_outcome=str(raw.get("check_outcome") or "ran"),
+            schema_version=str(raw.get("schema_version") or "2.0"),
+            cvss=float(raw.get("cvss") or 0.0),
+            evidence_hash=str(raw.get("evidence_hash") or ""),
+            first_seen=str(raw.get("first_seen") or ""),
+            last_seen=str(raw.get("last_seen") or ""),
         )
     else:
         raise TypeError(f"Unsupported finding type: {type(raw)}")
@@ -243,10 +303,16 @@ class ReportManager:
         return {
             "url": target.url,
             "status": "done" if getattr(target, "ok", True) else "failed",
+            "state": getattr(target, "state", "COMPLETE"),
             "score": getattr(target, "score", 100),
+            "score_display": getattr(target, "score_display", str(getattr(target, "score", 100))),
+            "grade": getattr(target, "grade", "A"),
             "request_count": getattr(target, "requests", 0),
             "duration_s": getattr(target, "elapsed_s", 0),
             "error": getattr(target, "error", "") or None,
+            "edge_banner": getattr(target, "edge_banner", ""),
+            "edge_challenged": getattr(target, "edge_challenged", False),
+            "checks_account": getattr(target, "checks_account", {"ran": 0, "skipped": 0, "failed": 0}),
         }
 
     def _slug(self, url: str) -> str:
@@ -258,20 +324,49 @@ class ReportManager:
         return self.base / fmt / f"{stamp}_{name}.{suffix}"
 
     @staticmethod
-    def mean_target_score(findings_by_target: dict) -> dict:
-        """Batch score is the mean of per-target scores, never a sum."""
-        scores = [score_counts(_counts(rows)) for rows in findings_by_target.values()]
-        if not scores:
-            return {"score": 100, "grade": "A", "counts": {s: 0 for s in SEVERITY_ORDER},
-                    "total": 0}
-        mean = round(sum(v for v, _ in scores) / len(scores))
-        worst = min(g for _, g in scores)
+    def mean_target_score(findings_by_target: dict, targets: list | None = None) -> dict:
+        """J1, J2, D4: Compute global score (min when CRITICAL exists, else mean of COMPLETE targets)."""
+        excluded_urls: set[str] = set()
+        if targets:
+            for t in targets:
+                st = (t.get("state") if isinstance(t, dict) else getattr(t, "state", "COMPLETE")) or "COMPLETE"
+                u = (t.get("url") if isinstance(t, dict) else getattr(t, "url", "")) or ""
+                if st in ("INCOMPLETE", "PARTIAL"):
+                    excluded_urls.add(u)
+
         all_counts = {s: 0 for s in SEVERITY_ORDER}
-        for rows in findings_by_target.values():
-            for r in rows:
-                all_counts[r["severity"]] += 1
-        return {"score": mean, "grade": worst, "counts": all_counts,
-                "total": sum(all_counts.values())}
+        per_target_scores: list[int] = []
+        for tgt_url, rows in findings_by_target.items():
+            c = _counts(rows)
+            for s_key, cnt in c.items():
+                all_counts[s_key] = all_counts.get(s_key, 0) + cnt
+            if any(str(r.get("title") or "") == "TARGET_UNREACHABLE" for r in rows):
+                continue
+            if tgt_url in excluded_urls:
+                continue
+            v, _ = score_counts(c)
+            per_target_scores.append(v)
+
+        if not per_target_scores and not any(all_counts.values()):
+            return {
+                "score": 100,
+                "grade": "A",
+                "counts": all_counts,
+                "total": 0,
+                "breakdown": score_breakdown(all_counts),
+            }
+        val, grade = compute_global_score(
+            per_target_scores,
+            has_critical=(all_counts.get("CRITICAL", 0) > 0),
+            total_counts=all_counts,
+        )
+        return {
+            "score": val,
+            "grade": grade,
+            "counts": all_counts,
+            "total": sum(all_counts.values()),
+            "breakdown": score_breakdown(all_counts),
+        }
 
     @staticmethod
     def summarize(rows: list[dict]) -> dict:
@@ -299,12 +394,15 @@ class ReportManager:
         ]
         return {
             # Section 15 AI-Readable required top-level metadata
+            "schema_version": "2.0",
             "report_id": rep_id,
             "scanner_version": "2.0.0",
             "report_timestamp": now_iso,
             "target_inventory": target_inv,
             "scan_scope": scan_meta.get("scope", {"authorized": True, "targets": [t["url"] for t in target_dicts]}),
             "methodology": SCORE_METHOD,
+            "score_breakdown": score_breakdown(_counts(all_rows)),
+            "systemic_findings": compute_systemic_findings(norm_by_target),
             "standards_versions": dict(STANDARDS_VERSIONS),
             "limitations": list(LIMITATIONS),
             "findings": all_rows,
@@ -439,11 +537,12 @@ class ReportManager:
         path.write_text(json.dumps(sarif_doc, indent=2, ensure_ascii=False), encoding="utf-8")
         return path
 
-    # ---- Markdown (Section 14 & Section 15) ------------------------------
+    # ---- Markdown (Section 14, Section 15 & Work Item K) -----------------
     def markdown_report(self, scan_meta: dict, targets: list,
-                        findings_by_target: dict[str, list[dict]]) -> Path:
+                        findings_by_target: dict[str, list[dict]],
+                        max_chars: int = 100_000) -> Path:
         payload = self._build_json_payload(scan_meta, targets, findings_by_target)
-        s = self.mean_target_score(payload["findings_by_target"])
+        s = self.mean_target_score(payload["findings_by_target"], payload["target_inventory"])
         buf = io.StringIO()
         w = buf.write
         w(f"# TSMSS 2.0 Security Assessment Report (`{payload['report_id']}`)\n\n")
@@ -452,50 +551,109 @@ class ReportManager:
         w(f"- **Targets Assessed**: {len(payload['target_inventory'])}\n")
         w(f"- **Total Findings**: {s['total']} (" + ", ".join(f"{k}: {v}" for k, v in s["counts"].items()) + ")\n\n")
 
-        w("## Standards Alignment\n")
+        # J3: Weight / deduction table in report header
+        w("## Score Weight & Deduction Table\n\n")
+        w("| Severity | Count | Cap | Saturation (k) | Deduction |\n")
+        w("| :--- | :---: | :---: | :---: | :---: |\n")
+        for b in s.get("breakdown", []):
+            w(f"| {b['severity']} | {b['count']} | {b['cap']} | {b['k']} | -{b['deduction']} |\n")
+
+        systemic = payload.get("systemic_findings") or []
+        if systemic:
+            w("\n## Systemic Findings\n\n")
+            for sf in systemic:
+                w(f"- **[{sf['severity']}] {sf['title']}** ({sf['affected_count']}/{sf['total_targets']} hosts)\n")
+
+        w("\n## Standards Alignment\n")
         for k, v in STANDARDS_VERSIONS.items():
             w(f"- `{k}`: `{v}`\n")
 
         w("\n## Target Summary\n\n")
-        w("| Target | Status | Score | Grade | Findings |\n")
-        w("| :--- | :--- | :---: | :---: | :---: |\n")
+        w("| Target | Status | State | Score | Grade | Findings |\n")
+        w("| :--- | :--- | :---: | :---: | :---: | :---: |\n")
         for t in payload["target_inventory"]:
             ts = t["summary"]
-            w(f"| `{t['url']}` | {t.get('status')} | {ts['score']} | **{ts['grade']}** | {ts['total']} |\n")
+            st = t.get("state") or "COMPLETE"
+            sc_disp = "INCOMPLETE" if st == "INCOMPLETE" else (t.get("score_display") or str(ts["score"]))
+            gr_disp = "INCOMPLETE" if st == "INCOMPLETE" else ts["grade"]
+            w(f"| `{t['url']}` | {t.get('status')} | {st} | {sc_disp} | **{gr_disp}** | {ts['total']} |\n")
 
-        confirmed_rows = [f for f in payload["findings"] if not _is_manual_or_potential(f)]
-        manual_rows = [f for f in payload["findings"] if _is_manual_or_potential(f)]
+        # K2 & K4: Per-target header block once + Verification section splitting Confirmed vs NEEDS MANUAL VERIFICATION
+        for t in payload["target_inventory"]:
+            t_url = t["url"]
+            t_rows = sorted(
+                payload["findings_by_target"].get(t_url, []),
+                key=lambda x: severity_rank(x["severity"]),
+            )
+            w(f"\n## Target: `{t_url}`\n")
+            if t.get("edge_banner"):
+                w(f"> **Banner**: `{t['edge_banner']}`\n\n")
+            # Emit response header block ONCE per target if captured
+            hdr_block = None
+            for f in t_rows:
+                ev = str(f.get("evidence") or "")
+                if ev.startswith("Response headers"):
+                    hdr_block = ev
+                    break
+            if hdr_block:
+                w(f"\n### Response Headers (`{t_url}`)\n```text\n{_trim_evidence(hdr_block, 600)}\n```\n")
 
-        w(f"\n## Confirmed & Strong-Evidence Findings ({len(confirmed_rows)})\n")
-        if not confirmed_rows:
-            w("\n_No confirmed or strong-evidence findings recorded._\n")
-        for f in sorted(confirmed_rows, key=lambda x: severity_rank(x["severity"])):
-            w(f"\n### [{f['severity']}] {f['title']} (`{f['finding_id']}`)\n")
-            w(f"- **Target**: `{f['target']}` (`{f['endpoint']}`)\n")
-            w(f"- **Verification Status**: `{f['verification_status']}` (`{f['confidence']}`)\n")
-            w(f"- **OWASP / WSTG / CWE**: {f['OWASP_reference']} | {f['WSTG_reference']} | `{f.get('CWE') or 'N/A'}`\n")
-            if f.get("parameter"):
-                w(f"- **Parameter**: `{f['parameter']}`\n")
-            w(f"- **Description**: {f['description']}\n")
-            w(f"- **Remediation**: {f['remediation']}\n")
-            if f.get("evidence"):
-                w(f"\n```text\n{_trim_evidence(f['evidence'], 400)}\n```\n")
+            t_confirmed = [f for f in t_rows if not _is_manual_or_potential(f)]
+            t_manual = [f for f in t_rows if _is_manual_or_potential(f)]
 
-        w(f"\n## Needs Manual Verification & Potential Indicators ({len(manual_rows)})\n")
-        if not manual_rows:
-            w("\n_No manual-verification indicators recorded._\n")
-        for f in sorted(manual_rows, key=lambda x: severity_rank(x["severity"])):
-            w(f"\n### [{f['severity']}] {f['title']} (`{f['finding_id']}`)\n")
-            w(f"- **Target**: `{f['target']}` | **Verification**: `{f['verification_status']}`\n")
-            w(f"- **False-Positive Notes**: {f['false_positive_notes']}\n")
-            w(f"- **Remediation**: {f['remediation']}\n")
+            w(f"\n### Verification — Machine-Confirmed Findings ({len(t_confirmed)})\n")
+            if not t_confirmed:
+                w("\n_No machine-confirmed findings for this target._\n")
+            for f in t_confirmed:
+                w(f"\n### [{f['severity']}] {f['title']} (`{f['finding_id']}`)\n")
+                w(f"- **Target**: `{f['target']}` (`{f['endpoint']}`)\n")
+                w(f"- **Verification Status**: `{f['verification_status']}` (`{f['confidence']}`)\n")
+                w(f"- **OWASP / WSTG / CWE**: {f['OWASP_reference']} | {f['WSTG_reference']} | `{f.get('CWE') or 'N/A'}`\n")
+                if f.get("parameter"):
+                    w(f"- **Parameter**: `{f['parameter']}`\n")
+                w(f"- **Description**: {f['description']}\n")
+                w(f"- **Remediation**: {f['remediation']}\n")
+                ev = str(f.get("evidence") or "")
+                if ev and not ev.startswith("Response headers"):
+                    w(f"\n```text\n{_trim_evidence(ev, 400)}\n```\n")
+
+            w(f"\n### Verification — Needs Manual Verification ({len(t_manual)})\n")
+            if not t_manual:
+                w("\n_No manual-verification findings for this target._\n")
+            for f in t_manual:
+                w(f"\n### [{f['severity']}] {f['title']} (`{f['finding_id']}`)\n")
+                w(f"- **Target**: `{f['target']}` | **Verification**: `{f['verification_status']}`\n")
+                w(f"- **False-Positive Notes**: {f['false_positive_notes']}\n")
+                w(f"- **Remediation**: {f['remediation']}\n")
 
         w("\n## Scan Limitations\n")
         for lim in LIMITATIONS:
             w(f"- {lim}\n")
 
+        full_md = buf.getvalue()
+        chunks = split_markdown_chunks(full_md, max_chars=max_chars)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         path = self._path("md", "combined", "md")
-        path.write_text(buf.getvalue(), encoding="utf-8")
+        path.write_text(full_md, encoding="utf-8")
+
+        if len(chunks) > 1:
+            part_files: list[str] = []
+            for idx, chunk in enumerate(chunks, start=1):
+                part_name = f"report_{stamp}_{idx}.md"
+                part_path = self.base / "md" / part_name
+                part_path.write_text(chunk, encoding="utf-8")
+                part_files.append(part_name)
+            idx_lines = [
+                f"# TSMSS Report Index (`{payload['report_id']}`)",
+                "",
+                f"Split into {len(part_files)} parts (<= {max_chars} chars each, never truncated mid-finding):",
+                "",
+            ]
+            for idx, pname in enumerate(part_files, start=1):
+                idx_lines.append(f"- [Part {idx}: `{pname}`]({pname})")
+            index_path = self.base / "md" / "index.md"
+            index_path.write_text("\n".join(idx_lines) + "\n", encoding="utf-8")
+
         return path
 
     # ---- AI Upload Package (Section 15) ----------------------------------

@@ -82,6 +82,11 @@ class Finding:
     edge: bool = False
     csp_source: str = ""
     check_outcome: str = "ran"
+    schema_version: str = "2.0"
+    cvss: float = 0.0
+    evidence_hash: str = ""
+    first_seen: str = ""
+    last_seen: str = ""
 
     def __post_init__(self) -> None:
         if not self.finding_id:
@@ -95,6 +100,15 @@ class Finding:
             self.evidence = "(no raw snippet captured)"
         if not self.url:
             self.url = self.target
+        if not self.evidence_hash:
+            self.evidence_hash = self.evidence_digest()
+        if not self.first_seen:
+            self.first_seen = self.timestamp
+        if not self.last_seen:
+            self.last_seen = self.timestamp
+        if not self.cvss:
+            _cvss_default = {"CRITICAL": 9.0, "HIGH": 7.5, "MEDIUM": 5.3, "LOW": 3.1, "INFO": 0.0}
+            self.cvss = _cvss_default.get(self.severity, 0.0)
         from core.verification import enrich_finding
         enrich_finding(self)
 
@@ -141,8 +155,9 @@ class Finding:
         return d
 
     def to_ai_dict(self) -> dict[str, Any]:
-        """Return exact Section 15 AI-readable finding structure."""
+        """Return exact Section 15 AI-readable finding structure + K3 accuracy fields."""
         return {
+            "schema_version": self.schema_version,
             "finding_id": self.finding_id,
             "target": self.target,
             "endpoint": self.endpoint or self.url or self.target,
@@ -153,15 +168,23 @@ class Finding:
             "confidence": self.confidence,
             "verification_status": self.verification_status,
             "evidence": self.evidence,
+            "evidence_hash": self.evidence_hash or self.evidence_digest(),
             "detection_method": self.detection_method,
             "OWASP_reference": self.owasp_reference,
             "WSTG_reference": self.wstg_reference,
             "CWE": self.cwe,
+            "cwe": self.cwe,
             "CVE": self.cve,
+            "cvss": self.cvss,
             "impact": self.impact,
             "remediation": self.remediation,
             "false_positive_notes": self.false_positive_notes,
             "timestamp": self.timestamp,
+            "first_seen": self.first_seen or self.timestamp,
+            "last_seen": self.last_seen or self.timestamp,
+            "edge": self.edge,
+            "csp_source": self.csp_source,
+            "check_outcome": self.check_outcome,
             "module": self.module,
             "parameter": self.parameter,
             "test_id": self.test_id,
