@@ -146,3 +146,11 @@
   1. Sweep all 16 common selectors (`default`, `google`, `selector1`, `selector2`, `s1`, `s2`, `k1`, `mail`, `dkim`, `brevo`, `hostinger`, `k2`, `smtp`, `mandrill`, `amazonses`, `postmark`, `Q1`).
   2. When none resolve (`Q2`), emit `LOW` `"No DKIM at common selectors (selector may differ)"` (`NEEDS MANUAL VERIFICATION`), never `MEDIUM`.
 - **Tradeoff**: Adds 7 concurrent DNS `TXT` queries per apex domain (`16` total vs `9`).
+
+## Item R — Fixtures, Unit Tests & Offline Integration Replay (`tests/`)
+- **Root Cause**: Regressions in SPA soft-404 calibration, RSC flight data XSS reflections, Cloudflare interstitials, duplicate headers, cookie exemptions, and DNS topology previously lacked deterministic offline fixtures.
+- **Detection Decision**:
+  1. Capture all 15 live-target defect patterns as static fixtures under `tests/fixtures/` (`R1`).
+  2. Test every modified module with positive and negative unit assertions in `tests/test_accuracy.py` (`R2`) and temp-dir writability failure in `tests/test_tempdir.py` (`R3`).
+  3. Replay all 15 fixtures through `tests/integration/replay.py` (`R4`) with zero network calls.
+- **Tradeoff**: None; all 15 fixture replays execute in `<0.5s` offline.

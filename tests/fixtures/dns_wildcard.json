@@ -1,0 +1,12 @@
+{
+  "host": "wildcard-target.example.com",
+  "apex": "example.com",
+  "url": "https://wildcard-target.example.com/",
+  "wildcard_probes": [
+    ["104.21.55.146"],
+    ["104.21.55.146"]
+  ],
+  "A": [
+    "104.21.55.146"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "host": "ffdiamondbd.com",
+  "url": "https://ffdiamondbd.com/",
+  "NS": [
+    "ada.ns.cloudflare.com.",
+    "bob.ns.cloudflare.com."
+  ],
+  "A": [
+    "145.223.86.178"
+  ],
+  "AAAA": []
+}

@@ -19,9 +19,10 @@ class TempDirError(RuntimeError):
 
 
 def _probe_writable(directory: Path) -> bool:
-    """Write, read back, and unlink a 1-byte probe file inside *directory*."""
+    """Write, read back, and unlink a 1-byte probe file inside an existing *directory*."""
     try:
-        directory.mkdir(parents=True, exist_ok=True)
+        if not directory.exists() or not directory.is_dir():
+            return False
     except OSError:
         return False
     probe_path = directory / f".tsmss_probe_{os.getpid()}_{id(directory)}"

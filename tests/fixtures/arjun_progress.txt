@@ -1,0 +1,8 @@
+[*] Probing the target for stability: https://example.com/
+[*] Analysing HTTP response for anomalies
+[*] Analysing HTTP response for potential parameter names
+[!] Progress: 12%
+[!] Progress: 36%
+[!] Progress: 74%
+[!] Progress: 100%
+[-] No parameters were discovered.

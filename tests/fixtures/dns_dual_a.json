@@ -1,0 +1,13 @@
+{
+  "host": "dual-origin.example.com",
+  "url": "https://dual-origin.example.com/",
+  "NS": [
+    "ns1.dns-parking.com.",
+    "ns2.dns-parking.com."
+  ],
+  "A": [
+    "185.199.108.153",
+    "109.106.255.79"
+  ],
+  "AAAA": []
+}

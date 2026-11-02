@@ -94,3 +94,9 @@
 ### Item Q — Expanded DKIM selector sweep (`modules/dns_security.py`, `config.py`)
 - Expanded `COMMON_DKIM_SELECTORS` (`dns.dkim_selectors`) to all 16 selectors (`default`, `google`, `selector1`, `selector2`, `s1`, `s2`, `k1`, `mail`, `dkim`, `brevo`, `hostinger`, `k2`, `smtp`, `mandrill`, `amazonses`, `postmark`).
 - Updated missing-DKIM finding to `LOW` `"No DKIM at common selectors (selector may differ)"` (`NEEDS MANUAL VERIFICATION`), never `MEDIUM`.
+
+### Item R — Fixtures, unit tests, temp-dir tests, and offline integration replay harness (`tests/`)
+- Added all 15 defect fixtures under `tests/fixtures/` (`nuxt_spa.html`, `next_rsc.html`, `wp_real.html`, `cf_challenge.html`, `dup_headers.txt`, `csp_comma.txt`, `wafw00f_banner.txt`, `arjun_progress.txt`, `ffdiamondbd_cookies.txt`, `codmshopbd_cookies.txt`, `bad_cookies.txt`, `dns_grey_cloud.json`, `dns_wildcard.json`, `dns_dual_a.json`, `dns_island_dnssec.json`).
+- Added `tests/test_tempdir.py` testing writability probe failure (`exit 3`, `"no writable temp directory"`) and 0-byte body validation.
+- Added `tests/test_accuracy.py` with positive and negative unit tests for every module touched in Work Items A..R (zero network access).
+- Added `tests/integration/replay.py` replaying all 15 fixtures and verifying exact finding counts, severities, and titles.

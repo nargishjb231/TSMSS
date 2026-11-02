@@ -1,0 +1,22 @@
+[1;97m
+                ______
+               /      \
+              (  W00f! )
+               \  ____/
+               ,,    __            404 Hack Not Found
+           |`-.__   / /                      __     __
+           /"  _/  /_/                       \ \   / /
+          *===*    /                          \ \_/ /  405 Not Allowed
+         /     )__//                           \   /
+    /|  /     /---`                        403 Forbidden
+    \\/`   \ |                                 / _ \
+    `\    /_\\_              502 Bad Gateway  / / \ \  500 Internal Error
+      `_____``-`                             /_/   \_\
+
+                        ~ WAFW00F : v2.2.0 ~
+        The Web Application Firewall Fingerprinting Toolkit
+[0m
+[1;94m[*][0m Checking https://bdtopupcenter.com
+[1;91m[-][0m Generic Detection results:
+[1;93m[-][0m No WAF detected by the generic detection
+[1;94m[~][0m Number of requests: 7

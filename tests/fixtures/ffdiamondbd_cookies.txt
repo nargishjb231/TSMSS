@@ -1,0 +1,2 @@
+Set-Cookie: XSRF-TOKEN=eyJpdiI6ImFiYzEyMyIsInZhbHVlIjoieHl6In0%3D; expires=Sun, 01-Nov-2026 19:00:00 GMT; Max-Age=7200; path=/; secure; samesite=lax
+Set-Cookie: laravel_session=eyJpdiI6ImRlZjQ1NiIsInZhbHVlIjoiduvwIn0%3D; expires=Sun, 01-Nov-2026 19:00:00 GMT; Max-Age=7200; path=/; secure; httponly; samesite=lax

@@ -14,8 +14,8 @@ BROWSER_HEADERS: dict[str, str] = {
 
 TITLE_RE = re.compile(r"(?is)<title[^>]*>(.*?)</title>")
 META_CSP_RE = re.compile(
-    r"""(?is)<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*content\s*=\s*["']([^"']*)["'][^>]*>"""
-    r"""|<meta\b[^>]*content\s*=\s*["']([^"']*)["'][^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>"""
+    r"""(?is)<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*content\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*>"""
+    r"""|<meta\b[^>]*content\s*=\s*(?:"([^"]*)"|'([^']*)')[^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>"""
 )
 
 EDGE_BANNER = "EDGE-CHALLENGE (app not observed)"
@@ -36,7 +36,10 @@ def extract_meta_csp(body: str) -> str:
     m = META_CSP_RE.search(body)
     if not m:
         return ""
-    return (m.group(1) or m.group(2) or "").strip()
+    for g in m.groups():
+        if g is not None:
+            return g.strip()
+    return ""
 
 
 def detect_challenge(status: int, headers: dict[str, str] | None, body: str) -> tuple[bool, str]:

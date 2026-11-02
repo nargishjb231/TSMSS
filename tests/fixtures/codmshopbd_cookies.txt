@@ -1,0 +1,2 @@
+Set-Cookie: __Host-authjs.csrf-token=0123456789abcdef%7Cfedcba9876543210; Path=/; HttpOnly; Secure; SameSite=Lax
+Set-Cookie: __Secure-authjs.callback-url=https%3A%2F%2Fcodmshopbd.com; Path=/; HttpOnly; Secure; SameSite=Lax
