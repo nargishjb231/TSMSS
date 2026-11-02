@@ -187,7 +187,7 @@ _DEDUCTION_K = {"CRITICAL": 3.0, "HIGH": 5.0, "MEDIUM": 8.0, "LOW": 15.0, "INFO"
 
 
 def score_counts(counts: dict[str, int]) -> tuple[int, str]:
-    """Score a severity histogram. Used by the engine and by every report."""
+    """Score a severity histogram with J1 grade caps (any CRITICAL -> max B; any HIGH -> max A-)."""
     deduction = sum(
         _DEDUCTION_CAP[sev] * n / (n + _DEDUCTION_K[sev])
         for sev, n in counts.items() if sev in _DEDUCTION_CAP and n
@@ -197,4 +197,49 @@ def score_counts(counts: dict[str, int]) -> tuple[int, str]:
         "A" if value >= 90 else "B" if value >= 80 else "C" if value >= 65
         else "D" if value >= 50 else "E" if value >= 30 else "F"
     )
+    # J1: Grade cap: any CRITICAL -> max grade B; any HIGH -> max grade A-
+    if counts.get("CRITICAL", 0) > 0:
+        if grade in ("A", "A-"):
+            grade = "B"
+    elif counts.get("HIGH", 0) > 0:
+        if grade == "A":
+            grade = "A-"
     return value, grade
+
+
+def score_breakdown(counts: dict[str, int]) -> list[dict[str, Any]]:
+    """Return the J3 weight/deduction table rows for a severity count map."""
+    rows: list[dict[str, Any]] = []
+    for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"):
+        n = int(counts.get(sev, 0) or 0)
+        cap = _DEDUCTION_CAP[sev]
+        k = _DEDUCTION_K[sev]
+        ded = round(cap * n / (n + k), 2) if n else 0.0
+        rows.append({"severity": sev, "count": n, "cap": cap, "k": k, "deduction": ded})
+    return rows
+
+
+def compute_global_score(
+    target_scores: list[int],
+    has_critical: bool = False,
+    total_counts: dict[str, int] | None = None,
+) -> tuple[int, str]:
+    """J2: Global score = min(per_target_scores) when any CRITICAL exists, else mean(per_target_scores)."""
+    counts = total_counts or {}
+    if has_critical or counts.get("CRITICAL", 0) > 0:
+        has_critical = True
+    if not target_scores:
+        return score_counts(counts)
+    if has_critical:
+        val = int(min(target_scores))
+    else:
+        val = int(round(sum(target_scores) / len(target_scores)))
+    grade = (
+        "A" if val >= 90 else "B" if val >= 80 else "C" if val >= 65
+        else "D" if val >= 50 else "E" if val >= 30 else "F"
+    )
+    if has_critical and grade in ("A", "A-"):
+        grade = "B"
+    elif counts.get("HIGH", 0) > 0 and grade == "A":
+        grade = "A-"
+    return val, grade

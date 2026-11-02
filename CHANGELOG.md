@@ -51,3 +51,9 @@
 ### Item I — Subdomain canonicalization and IP-set deduplication
 - Added `canonicalize_subdomain()` in `modules/dns_security.py` lowercasing, stripping trailing dots, and collapsing repeated prefixes (`www.www.`, `mail.mail.`, `www.admin.` -> `admin.`).
 - Added `dedupe_subdomains()` deduplicating discovered subdomains by `(canonical_name, resolved_ip_set)` before emitting findings.
+
+### Item J — Scoring grade caps, global score aggregation, Cloudflare edge ports, and CMS `robots.txt` suppression
+- Updated `score_counts()` and `compute_global_score()` in `core/finding.py`: capped grade at `B` when any `CRITICAL` finding exists and `A-` when any `HIGH` finding exists; computed global score as `min(per_target_scores)` when any `CRITICAL` exists, else `mean(per_target_scores)`.
+- Added `score_breakdown()` returning the per-severity weight/deduction table.
+- Updated `modules/infrastructure.py` (`classify_port_severity`) to classify ports `8080`/`8443` on Cloudflare-proxied hosts as `INFO` (`"edge port"`) and `LOW`/`MEDIUM` only when origin is exposed.
+- Updated `modules/reconnaissance.py` to suppress standard WordPress `robots.txt` entries (`/wp-admin/`, `/wp-content/`, `/wp-includes/`, `/wp-json/`), emitting `INFO` when no other sensitive disallow paths remain.

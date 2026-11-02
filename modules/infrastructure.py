@@ -10,7 +10,21 @@ from core.finding import CONFIRMED, HIGH_CONF, HIGH, INFO, LOW, MEDIUM, NEEDS_MA
 from modules.base import BaseModule
 
 # Ports that are expected on a public web host carry no weight.
-PORT_SEVERITY = {"80": INFO, "443": INFO, "8080": INFO, "8443": INFO}
+PORT_SEVERITY = {"80": INFO, "443": INFO, "8080": LOW, "8443": LOW}
+CF_EDGE_PORTS = {"8080", "8443"}
+
+
+def classify_port_severity(port: str | int, topology: str = "", cdn: str = "") -> tuple[str, str]:
+    """J4: Ports 8080/8443 on Cloudflare-proxied hosts -> INFO 'edge port'; LOW/MEDIUM when origin exposed."""
+    p = str(port)
+    is_cf_proxied = (topology == "CF_PROXIED") or (cdn.lower() == "cloudflare" and topology != "CF_DNS_ONLY")
+    if p in CF_EDGE_PORTS and is_cf_proxied:
+        return INFO, "edge port"
+    if p in ("80", "443"):
+        return INFO, "standard web port"
+    if p in CF_EDGE_PORTS:
+        return LOW, "origin alt-http port"
+    return MEDIUM, "non-standard port"
 
 CDN_SIGNS = {
     "cloudflare": ("cloudflare", "cf-ray", "__cfduid", "cf-cache-status"),
@@ -96,13 +110,15 @@ class InfrastructureModule(BaseModule):
         open_ports = re.findall(r"^(\d+)/tcp\s+open\s+(\S+)", text, re.M)
         out = []
         for port, service in open_ports:
-            sev = PORT_SEVERITY.get(port, MEDIUM)
+            topo = getattr(ctx, "topology", "")
+            cdn = getattr(ctx, "cdn", "")
+            sev, port_note = classify_port_severity(port, topology=topo, cdn=cdn)
+            title_suffix = f" — {port_note}" if port_note == "edge port" else ""
             out.append(self.make(
-                ctx, title=f"Open port {port}/tcp ({service})",
+                ctx, title=f"Open port {port}/tcp ({service}){title_suffix}",
                 severity=sev,
-                description="A reachable TCP service was identified on a non-standard or "
-                            "standard port.",
-                evidence=f"{port}/tcp open {service}", detection_method="nmap connect scan",
+                description=f"A reachable TCP service was identified ({port_note}).",
+                evidence=f"{port}/tcp open {service} ({port_note})", detection_method="nmap connect scan",
                 confidence=CONFIRMED,
                 remediation="Restrict non-public services at the firewall.",
                 tags=["infrastructure", "ports"]))

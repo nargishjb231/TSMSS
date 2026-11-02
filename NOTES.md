@@ -77,3 +77,12 @@
   1. Canonicalize subdomain candidates via `canonicalize_subdomain()` (`I1`): lowercase, strip trailing dot, collapse consecutive identical labels (`mail.mail.` -> `mail.`), and strip leading `www.` when followed by another subdomain label (`www.admin.` -> `admin.`).
   2. Deduplicate resolved entries by `(canonical_name, resolved_ip_set)` (`I2`) prior to emitting findings.
 - **Tradeoff**: Intentional multi-level `www.<sublabel>.<apex>` hosts are collapsed to `<sublabel>.<apex>`, eliminating recursive prefix noise on wildcard/CNAME zones.
+
+## Item J — Scoring Grade Caps, Edge Port Severity & CMS `robots.txt` Suppression
+- **Root Cause**: Averaging per-target scores hid single-target `CRITICAL` findings behind an overall `90/100 (A)` grade; Cloudflare anycast ports `8080`/`8443` and standard WordPress `/wp-admin/` `robots.txt` entries inflated finding counts.
+- **Detection Decision**:
+  1. Cap grades at `B` whenever any `CRITICAL` is present and at `A-` whenever any `HIGH` is present (`J1`).
+  2. Compute global score as `min(per_target_scores)` when any `CRITICAL` exists across valid targets, else `mean(per_target_scores)` (`J2`), and include the deduction breakdown table (`J3`).
+  3. Classify ports `8080`/`8443` on `CF_PROXIED` hosts as `INFO` (`"edge port"`), raising `LOW`/`MEDIUM` only on `CF_DNS_ONLY` or `DIRECT` origins (`J4`).
+  4. Suppress `/wp-admin/`, `/wp-content/`, `/wp-includes/`, and `/wp-json/` in `robots.txt` (`J5`), emitting `INFO` if no other sensitive disallow rules remain.
+- **Tradeoff**: A single `CRITICAL` on one target in a multi-target batch pulls the batch global score down to that target's score (`min`), ensuring critical exposures can never be masked by clean sibling hosts.

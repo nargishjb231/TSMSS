@@ -11,8 +11,16 @@ from core.finding import CONFIRMED, HIGH_CONF, INFO, LOW, MEDIUM, NEEDS_MANUAL, 
 from modules.base import BaseModule
 
 SENSITIVE_ROBOTS = re.compile(
-    r"(?i)/(admin|backup|bak|config|db|debug|dump|env|git|graphql|internal|private|secret|staging|swagger|test|wp-admin)"
+    r"(?i)/(admin|backup|bak|config|db|debug|dump|env|git|graphql|internal|private|secret|staging|swagger|test)"
 )
+STANDARD_CMS_ROBOTS = re.compile(
+    r"(?i)^/(wp-admin|wp-content|wp-includes|wp-json)(/|$|\*)"
+)
+
+
+def is_standard_cms_robots_entry(path: str) -> bool:
+    """J5: Return True if *path* is a standard WordPress/CMS robots.txt disallow entry."""
+    return bool(STANDARD_CMS_ROBOTS.match((path or "").strip()))
 DOM_SINKS = re.compile(r"\b(innerHTML|outerHTML|document\.write|document\.writeln|eval|setTimeout\s*\(\s*['\"])\b")
 DOM_SOURCES = re.compile(r"\b(location\.search|location\.hash|location\.href|document\.URL|document\.referrer|window\.name|addEventListener\s*\(\s*['\"]message['\"])\b")
 STORAGE_TOKEN_SINK = re.compile(
@@ -55,7 +63,8 @@ class ReconnaissanceModule(BaseModule):
                         disallows.append(val)
                 elif line.lower().startswith("sitemap:"):
                     sitemaps.append(line.split(":", 1)[1].strip())
-            sensitive = [d for d in disallows if SENSITIVE_ROBOTS.search(d)]
+            non_cms = [d for d in disallows if not is_standard_cms_robots_entry(d)]
+            sensitive = [d for d in non_cms if SENSITIVE_ROBOTS.search(d)]
             if sensitive:
                 out.append(self.make(
                     ctx,
