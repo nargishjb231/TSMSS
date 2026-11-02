@@ -90,3 +90,7 @@
 - Added `evaluate_cipher_name()` in `modules/ssl_tls.py`: `RC4`/`3DES`/`NULL`/`EXPORT` -> `MEDIUM`; non-AEAD cipher in TLS 1.2 -> `LOW`.
 - Calibrated certificate rules: `RSA < 2048` -> `MEDIUM`, `ECDSA 256` -> OK (never flagged), expiry `<30d` -> `LOW`, `<7d` -> `MEDIUM`, expired -> `HIGH`, and wildcard SAN (`*.domain`) -> `INFO` `"Wildcard certificate, subdomain takeover blast radius"`.
 - Added `evaluate_caa()` in `modules/dns_security.py` parsing `issue`/`issuewild`/`iodef` (`LOW` when absent, `MEDIUM` when permissive) and wired `>70%` systemic aggregate findings for TLS 1.0/1.1 (`MEDIUM`) and missing CAA (`LOW`) in `core/report_manager.py`.
+
+### Item Q — Expanded DKIM selector sweep (`modules/dns_security.py`, `config.py`)
+- Expanded `COMMON_DKIM_SELECTORS` (`dns.dkim_selectors`) to all 16 selectors (`default`, `google`, `selector1`, `selector2`, `s1`, `s2`, `k1`, `mail`, `dkim`, `brevo`, `hostinger`, `k2`, `smtp`, `mandrill`, `amazonses`, `postmark`).
+- Updated missing-DKIM finding to `LOW` `"No DKIM at common selectors (selector may differ)"` (`NEEDS MANUAL VERIFICATION`), never `MEDIUM`.

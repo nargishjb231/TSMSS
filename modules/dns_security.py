@@ -30,6 +30,11 @@ TAKEOVER_FINGERPRINTS = {
     "zendesk.com": "Help Center Closed",
 }
 
+COMMON_DKIM_SELECTORS: tuple[str, ...] = (
+    "default", "google", "selector1", "selector2", "s1", "s2", "k1", "mail", "dkim",
+    "brevo", "hostinger", "k2", "smtp", "mandrill", "amazonses", "postmark",
+)
+
 
 def canonicalize_subdomain(name: str, apex: str = "") -> str:
     """I1: Lowercase, strip trailing dot, collapse repeated prefixes (www.www., mail.mail., www.admin. -> admin.)."""
@@ -678,16 +683,17 @@ class DnsSecurityModule(BaseModule):
                 remediation="Rotate keys periodically.", tags=["dns", "email", "inventory"]))
         elif records["MX"]:
             out.append(self.make(
-                ctx, title="No DKIM key found under common selectors",
-                severity=INFO, cwe="CWE-290",
-                description="DKIM keys were not located for the common selectors; a custom "
+                ctx, title="No DKIM at common selectors (selector may differ)",
+                severity=LOW, cwe="CWE-290",
+                description="DKIM keys were not located for the 16 common selectors; a custom "
                             "selector may be in use.",
-                evidence=f"selectors tried: {ctx.config.get('dns.dkim_selectors')}",
+                evidence=f"selectors tried: {list(COMMON_DKIM_SELECTORS)}",
                 detection_method="Selector dictionary query", confidence=NEEDS_MANUAL,
                 remediation="Confirm selector names with the mail operator.", tags=["dns", "email"]))
 
     async def _dkim(self, r, apex: str, config) -> str | None:
-        selectors = config.get("dns.dkim_selectors", [])[:10]
+        cfg_sels = list(config.get("dns.dkim_selectors", []) or [])
+        selectors = list(dict.fromkeys(list(COMMON_DKIM_SELECTORS) + cfg_sels))
         tasks = [R.query(r, f"{s}._domainkey.{apex}", "TXT") for s in selectors]
         for selector, values in zip(selectors, await asyncio.gather(*tasks, return_exceptions=True)):
             if isinstance(values, list) and any("p=" in v for v in values):

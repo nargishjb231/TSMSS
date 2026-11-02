@@ -63,7 +63,10 @@ DEFAULTS: dict[str, Any] = {
     },
     "dns": {
         "resolvers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"],
-        "dkim_selectors": ["default", "google", "selector1", "selector2", "s1", "s2", "k1", "mail", "dkim"],
+        "dkim_selectors": [
+            "default", "google", "selector1", "selector2", "s1", "s2", "k1", "mail", "dkim",
+            "brevo", "hostinger", "k2", "smtp", "mandrill", "amazonses", "postmark",
+        ],
         "timeout": 6,
         "lifetime": 12,
         "subdomain_wordlist": [

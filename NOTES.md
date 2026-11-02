@@ -139,3 +139,10 @@
   3. Enforce `RSA < 2048` -> `MEDIUM`, `ECDSA 256` -> OK, expiry `<30d` -> `LOW`, `<7d` -> `MEDIUM`, expired -> `HIGH` (`P4`), and wildcard SAN (`*.domain`) -> `INFO` `"Wildcard certificate, subdomain takeover blast radius"` (`P5`).
   4. Flag absent CAA as `LOW` per host + `LOW` Systemic Finding when `>70%` of targets lack it, and parse `issue`/`issuewild`/`iodef` (`P6`).
 - **Tradeoff**: Systemic aggregation requires `>=2` targets in a scan batch to exceed the `70%` threshold meaningfully.
+
+## Item Q — Expanded DKIM Selector Sweep
+- **Root Cause**: `codmshopbd.com` (Brevo) and Hostinger-hosted domains used provider-specific DKIM selectors (`brevo`, `hostinger`, `mandrill`, `amazonses`, `postmark`) absent from the 9-selector list.
+- **Detection Decision**:
+  1. Sweep all 16 common selectors (`default`, `google`, `selector1`, `selector2`, `s1`, `s2`, `k1`, `mail`, `dkim`, `brevo`, `hostinger`, `k2`, `smtp`, `mandrill`, `amazonses`, `postmark`, `Q1`).
+  2. When none resolve (`Q2`), emit `LOW` `"No DKIM at common selectors (selector may differ)"` (`NEEDS MANUAL VERIFICATION`), never `MEDIUM`.
+- **Tradeoff**: Adds 7 concurrent DNS `TXT` queries per apex domain (`16` total vs `9`).
