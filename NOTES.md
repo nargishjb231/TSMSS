@@ -43,3 +43,12 @@
   2. Retry once with a browser `User-Agent` + `Accept` + `Accept-Language` (`E2`).
   3. If still challenged (`E3`), set `edge_banner = "EDGE-CHALLENGE (app not observed)"`, tag findings with `edge=True`, record `csp_source="meta"` (or `"header"`) on an `INFO` edge note (`"describes edge response"`), and suppress all application-header claims (`Missing HSTS`, `Missing CSP`, `Missing XFO`) and downstream app-layer probes.
 - **Tradeoff**: Challenged targets cannot have their origin application headers or paths audited without origin IP discovery or WAF allowlisting, but reports now honestly state `EDGE-CHALLENGE (app not observed)` with `0` bogus application-header findings.
+
+## Item F — Header Correctness (Duplicate Single-Value Headers & CSP Syntax)
+- **Root Cause**: `vertexbazaar.com` and `topupsbd.com` emitted `X-Frame-Options` twice (`DENY` and `SAMEORIGIN`) and `X-Content-Type-Options` twice as separate header lines, while `ffdiamondbd.com` emitted `frame-ancestors 'self', upgrade-insecure-requests` separated by a comma instead of a semicolon. Presence-only checks previously passed both.
+- **Detection Decision**:
+  1. Inspect `resp.multi_headers` and `resp.get_all()` for `X-Frame-Options`, `X-Content-Type-Options`, and `Strict-Transport-Security` (`F1`). Multiple occurrences emit `MEDIUM` `"Duplicate <Header> header, value invalid"`.
+  2. Validate header values (`F2`): `X-Frame-Options` (`DENY` or `SAMEORIGIN`), `Strict-Transport-Security` (`max-age=0` -> `MEDIUM`, `<15552000` -> `LOW`), `X-Content-Type-Options` (`nosniff`), and `Referrer-Policy` (W3C token allowlist).
+  3. Split `Content-Security-Policy` on `';'` (`F3`) and flag any directive containing `','` as `MEDIUM` `"Malformed Content-Security-Policy (comma-separated directives)"`.
+  4. Never emit both `"missing header"` (or missing-XFO clickjacking) and `"duplicate invalid"` for the same header (`F4`).
+- **Tradeoff**: None; RFC/W3C grammar violations and duplicate single-value headers are deterministically detected from already-fetched response headers.

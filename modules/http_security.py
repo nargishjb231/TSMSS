@@ -15,6 +15,55 @@ PROBE_METHODS = ["OPTIONS", "TRACE", "PUT", "DELETE", "PATCH", "DEBUG"]
 SERVER_HEADERS = ("server", "x-powered-by", "x-aspnet-version", "x-generator",
                   "x-drupal-cache", "x-runtime", "x-rack-cache")
 
+SINGLE_VALUE_HEADERS: dict[str, str] = {
+    "x-frame-options": "X-Frame-Options",
+    "x-content-type-options": "X-Content-Type-Options",
+    "strict-transport-security": "Strict-Transport-Security",
+}
+
+VALID_REFERRER_POLICIES: set[str] = {
+    "no-referrer",
+    "no-referrer-when-downgrade",
+    "origin",
+    "origin-when-cross-origin",
+    "same-origin",
+    "strict-origin",
+    "strict-origin-when-cross-origin",
+    "unsafe-url",
+}
+
+
+def parse_raw_header_lines(raw_text: str) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Parse raw HTTP header block lines into `(headers, multi_headers)`."""
+    headers: dict[str, str] = {}
+    multi: dict[str, list[str]] = {}
+    for line in (raw_text or "").splitlines():
+        s = line.strip()
+        if not s or s.upper().startswith("HTTP/") or ":" not in s:
+            continue
+        k, v = s.split(":", 1)
+        key = k.strip().lower()
+        val = v.strip()
+        multi.setdefault(key, []).append(val)
+        if key in headers:
+            headers[key] = f"{headers[key]}, {val}"
+        else:
+            headers[key] = val
+    return headers, multi
+
+
+def _is_duplicate_single_header(resp, name: str) -> tuple[bool, list[str]]:
+    """Return `(is_duplicate, values)` for a single-value header (F1)."""
+    key = name.lower()
+    raw_list = list((getattr(resp, "multi_headers", None) or {}).get(key, []))
+    if len(raw_list) > 1:
+        return True, raw_list
+    tokens = resp.get_all(key)
+    if len(tokens) > 1:
+        return True, tokens
+    return False, raw_list or tokens
+
+
 def _header_tokens(resp, name):
     """Split a possibly repeated header into lowercased, de-duplicated tokens."""
     out = []
@@ -116,15 +165,60 @@ class HttpSecurityModule(BaseModule):
 
     async def _headers(self, ctx, resp):
         found = []
+        duplicated: set[str] = set()
+
+        # F1: Duplicate single-value headers check
+        for h_key, h_display in SINGLE_VALUE_HEADERS.items():
+            is_dup, vals = _is_duplicate_single_header(resp, h_key)
+            if is_dup:
+                duplicated.add(h_key)
+                found.append(self.make(
+                    ctx,
+                    title=f"Duplicate {h_display} header, value invalid",
+                    severity=MEDIUM,
+                    cwe="CWE-693",
+                    description=(
+                        f"{h_display} was emitted multiple times ({', '.join(vals)}). "
+                        "Browsers and proxies may ignore conflicting or duplicated single-value security headers."
+                    ),
+                    evidence=f"{h_display} values: {', '.join(vals)}",
+                    detection_method="Multi-header inspection (get_list)",
+                    confidence=CONFIRMED,
+                    remediation=f"Emit exactly one {h_display} response header with a canonical value.",
+                    tags=["headers", "duplicate", h_key],
+                ))
+
+        setattr(ctx, "_duplicated_headers", duplicated)
+
+        # F4: Never emit both "missing header" and "duplicate invalid" for the same header
         for header in EXPECTED_PRESENT:
-            if header in resp.headers:
+            if header in resp.headers or header in duplicated or header in getattr(resp, "multi_headers", {}):
                 continue
             f = self.header_check.missing_finding(ctx, resp, header)
             if f:
                 found.append(f)
-        # Present-but-weak values
+
+        # F3: CSP syntax parser (comma-separated directives vs semicolon) + weak sources
         csp = resp.header("content-security-policy")
         if csp:
+            directives = [d.strip() for d in csp.split(";") if d.strip()]
+            comma_dirs = [d for d in directives if "," in d]
+            if comma_dirs:
+                found.append(self.make(
+                    ctx,
+                    title="Malformed Content-Security-Policy (comma-separated directives)",
+                    severity=MEDIUM,
+                    cwe="CWE-693",
+                    description=(
+                        "One or more CSP directives contain a comma instead of a semicolon delimiter "
+                        f"({'; '.join(comma_dirs)}), causing browsers to misparse or ignore the directive."
+                    ),
+                    evidence=f"Content-Security-Policy: {csp[:600]}",
+                    detection_method="CSP directive syntax parser",
+                    confidence=CONFIRMED,
+                    remediation="Separate Content-Security-Policy directives with semicolons (';'), never commas.",
+                    tags=["headers", "csp", "malformed"],
+                ))
             weak = [d for d in ("unsafe-inline", "unsafe-eval", "*") if d in csp]
             if weak:
                 found.append(self.make(
@@ -137,17 +231,57 @@ class HttpSecurityModule(BaseModule):
                     remediation="Remove 'unsafe-inline'/'unsafe-eval' in favour of nonces or "
                                 "hashes; avoid wildcard sources.",
                     tags=["headers", "csp"]))
-        xfo = _header_tokens(resp, "x-frame-options")
-        bad_xfo = [t for t in xfo if t not in ("deny", "sameorigin")]
-        if bad_xfo:
-            found.append(self.make(
-                ctx, title="X-Frame-Options uses an invalid or legacy value",
-                severity=LOW, cwe="CWE-1021",
-                description=f"Value(s) {', '.join(bad_xfo)} are not DENY or SAMEORIGIN.",
-                evidence=f"X-Frame-Options: {', '.join(xfo)}",
-                detection_method="Header value validation", confidence=CONFIRMED,
-                remediation="Use 'DENY' or 'SAMEORIGIN', or CSP frame-ancestors.",
-                tags=["headers"]))
+
+        # F2: X-Frame-Options value validation (skip if already flagged as duplicate)
+        if "x-frame-options" not in duplicated and "x-frame-options" in resp.headers:
+            raw_xfo = resp.header("x-frame-options").strip()
+            if raw_xfo.lower() not in ("deny", "sameorigin"):
+                found.append(self.make(
+                    ctx, title="X-Frame-Options uses an invalid or legacy value",
+                    severity=MEDIUM, cwe="CWE-1021",
+                    description=f"Value '{raw_xfo}' is not DENY or SAMEORIGIN.",
+                    evidence=f"X-Frame-Options: {raw_xfo}",
+                    detection_method="Header value validation", confidence=CONFIRMED,
+                    remediation="Use 'DENY' or 'SAMEORIGIN', or CSP frame-ancestors.",
+                    tags=["headers", "x-frame-options"]))
+
+        # F2: Strict-Transport-Security value validation (when present on any response and not duplicated)
+        if "strict-transport-security" not in duplicated and "strict-transport-security" in resp.headers:
+            raw_hsts = resp.header("strict-transport-security").strip()
+            m_hsts = re.search(r"(?i)\bmax-age\s*=\s*(\d+)", raw_hsts)
+            if not m_hsts:
+                found.append(self.make(
+                    ctx, title="Strict-Transport-Security header invalid (missing max-age)",
+                    severity=MEDIUM, cwe="CWE-319",
+                    description="The HSTS header does not specify a valid max-age directive.",
+                    evidence=f"Strict-Transport-Security: {raw_hsts}",
+                    detection_method="Header value validation", confidence=CONFIRMED,
+                    remediation="Send Strict-Transport-Security: max-age=31536000; includeSubDomains",
+                    tags=["headers", "hsts"]))
+            elif int(m_hsts.group(1)) == 0:
+                found.append(self.make(
+                    ctx, title="Strict-Transport-Security sets max-age=0 (HSTS disabled)",
+                    severity=MEDIUM, cwe="CWE-319",
+                    description="max-age=0 instructs browsers to immediately expire HSTS protection.",
+                    evidence=f"Strict-Transport-Security: {raw_hsts}",
+                    detection_method="Header value validation", confidence=CONFIRMED,
+                    remediation="Set max-age to at least 31536000 (1 year).",
+                    tags=["headers", "hsts"]))
+
+        # F2: Referrer-Policy value validation
+        if "referrer-policy" in resp.headers:
+            rp_tokens = _header_tokens(resp, "referrer-policy")
+            bad_rp = [t for t in rp_tokens if t not in VALID_REFERRER_POLICIES]
+            if bad_rp:
+                found.append(self.make(
+                    ctx, title="Referrer-Policy uses an invalid token",
+                    severity=LOW, cwe="CWE-693",
+                    description=f"Invalid Referrer-Policy token(s): {', '.join(bad_rp)}.",
+                    evidence=f"Referrer-Policy: {resp.header('referrer-policy')}",
+                    detection_method="Header value validation", confidence=CONFIRMED,
+                    remediation="Use 'strict-origin-when-cross-origin' or 'no-referrer'.",
+                    tags=["headers", "referrer-policy"]))
+
         return found
 
     async def _transport(self, ctx, resp):
@@ -202,7 +336,8 @@ class HttpSecurityModule(BaseModule):
                     remediation="Force HTTPS with HSTS and a 301 redirect.",
                     tags=["transport"]))
             hsts = resp.header("strict-transport-security")
-            if not hsts:
+            duplicated = getattr(ctx, "_duplicated_headers", set())
+            if not hsts and "strict-transport-security" not in duplicated:
                 out.append(self.make(
                     ctx, title="Strict-Transport-Security header absent",
                     severity=MEDIUM, cwe="CWE-319",
@@ -213,9 +348,9 @@ class HttpSecurityModule(BaseModule):
                     remediation="Send Strict-Transport-Security: max-age=31536000; "
                                 "includeSubDomains; preload once HTTPS is stable.",
                     tags=["transport", "hsts"]))
-            else:
-                m = re.search(r"max-age=(\d+)", hsts)
-                if m and int(m.group(1)) < 15552000:
+            elif hsts and "strict-transport-security" not in duplicated:
+                m = re.search(r"(?i)\bmax-age\s*=\s*(\d+)", hsts)
+                if m and 0 < int(m.group(1)) < 15552000:
                     out.append(self.make(
                         ctx, title="HSTS max-age below recommended minimum",
                         severity=LOW, cwe="CWE-319",
@@ -227,8 +362,10 @@ class HttpSecurityModule(BaseModule):
         return out
 
     async def _xcto(self, ctx, resp):
+        if "x-content-type-options" in getattr(ctx, "_duplicated_headers", set()):
+            return []
         raw = resp.header("x-content-type-options")
-        if raw and "nosniff" not in _header_tokens(resp, "x-content-type-options"):
+        if raw and raw.strip().lower() != "nosniff":
             return [self.make(
                 ctx, title="X-Content-Type-Options set without nosniff",
                 severity=LOW, cwe="CWE-693",
@@ -294,6 +431,11 @@ class HttpSecurityModule(BaseModule):
         return out
 
     async def _clickjacking(self, ctx, resp):
+        duplicated = getattr(ctx, "_duplicated_headers", set())
+        if "x-frame-options" in duplicated or "x-frame-options" in resp.headers:
+            # F4: Do not emit a separate missing-XFO / clickjacking finding when X-Frame-Options
+            # is already present (valid, invalid, or duplicate).
+            return []
         xfo = [t for t in _header_tokens(resp, "x-frame-options")
                if t in ("deny", "sameorigin")]
         csp = resp.header("content-security-policy")

@@ -30,3 +30,9 @@
 - Added `probe/challenge.py` detecting Cloudflare (`cf-mitigated: challenge`, `status in (403, 503)` with `"Just a moment..."` or `"challenges.cloudflare.com"`), Sucuri, Akamai, Imperva, and DataDome interstitials.
 - Retried challenged responses once in `core/http_client.py` using browser `User-Agent`, `Accept`, and `Accept-Language` headers.
 - When still challenged, set target banner to `EDGE-CHALLENGE (app not observed)`, tagged findings with `edge=True`, recorded `csp_source="meta"` (or `"header"`) as an `INFO` edge note (`"describes edge response"`), and suppressed application-header findings (`Missing HSTS`, `Missing CSP`, `Missing XFO`).
+
+### Item F — Header correctness (duplicates, value validation, and malformed CSP)
+- Added duplicate single-value header detection (`X-Frame-Options`, `X-Content-Type-Options`, `Strict-Transport-Security`) via `multi_headers` / `get_all` in `modules/http_security.py`, emitting `MEDIUM` `"Duplicate <Header> header, value invalid"`.
+- Added strict value validation for `X-Frame-Options` (`DENY` | `SAMEORIGIN`), `Strict-Transport-Security` (`max-age=0` -> `MEDIUM`, `0 < max-age < 15552000` -> `LOW`, missing `max-age` -> `MEDIUM`), `X-Content-Type-Options` (`nosniff`), and `Referrer-Policy` (W3C token set).
+- Added CSP directive syntax parser detecting comma-separated directives (`frame-ancestors 'self', upgrade-insecure-requests`) as `MEDIUM` `"Malformed Content-Security-Policy (comma-separated directives)"`.
+- Enforced mutual exclusion so duplicate or invalid headers never also emit a separate `"missing header"` or clickjacking finding.
